@@ -7,7 +7,18 @@ The project intentionally avoids orchestration frameworks such as LangChain and
 LangGraph. The goal is to make planning, tool calling, observations, execution
 state, and reflection visible in ordinary Python code.
 
-## Architecture
+## Learning Path
+
+| Version | Notebook | Focus | Status |
+| --- | --- | --- | --- |
+| V1 | [`01_v1_static_multi_agent_workflow.ipynb`](notebooks/01_v1_static_multi_agent_workflow.ipynb) | Structured planning, tool use, deterministic execution, and reflection | Stable ([`v0.1.0`](https://github.com/daniellaah/agentic-deepresearch/tree/v0.1.0)) |
+| V2 | [`02_v2_adaptive_deep_research.ipynb`](notebooks/02_v2_adaptive_deep_research.ipynb) | Scoping, adaptive supervision, isolated workers, compression, and parallel research | In development |
+
+Each notebook is independently runnable. V1 remains a stable teaching artifact,
+while V2 starts from the same executable baseline and replaces the static
+research workflow incrementally.
+
+## V1 Architecture
 
 The current workflow uses five responsibilities:
 
@@ -35,7 +46,7 @@ research_agent -> writer_agent -> editor_agent -> writer_agent
 The Editor-to-Writer transition is the reflection pattern: the first draft is
 observed and criticized before the final revision is produced.
 
-## What the Notebook Demonstrates
+## V1 Concepts
 
 - OpenAI Responses API basics
 - Draft-Critic-Revision reflection
@@ -50,7 +61,9 @@ observed and criticized before the final revision is produced.
 
 ```text
 .
-├── agentic_ai_from_scratch.ipynb  # Main learning notebook
+├── notebooks/
+│   ├── 01_v1_static_multi_agent_workflow.ipynb
+│   └── 02_v2_adaptive_deep_research.ipynb
 ├── agent_schema.py                # TaskPlan and PlanStep schemas
 ├── agent_tools.py                 # arXiv and Tavily tools
 ├── .env.example                   # Environment variable template
@@ -97,8 +110,12 @@ Start JupyterLab with the project environment:
 uv run jupyter lab
 ```
 
-Open `agentic_ai_from_scratch.ipynb` and run the cells in order. The final entry
-point is:
+Choose a notebook from the learning path and run its cells in order. Start with
+`01_v1_static_multi_agent_workflow.ipynb` to learn the complete fixed workflow,
+then continue with `02_v2_adaptive_deep_research.ipynb` as the adaptive design is
+developed.
+
+The V1 entry point is:
 
 ```python
 final_report = run_deep_research(
@@ -121,7 +138,7 @@ This function:
 API and search calls can incur cost and take time. The notebook therefore keeps
 individual agent test cells commented out by default.
 
-## Plan Invariants
+## V1 Plan Invariants
 
 The deterministic validator requires:
 
@@ -169,7 +186,7 @@ This validation is deterministic. It does not prove that every factual claim or
 citation is correct. Conversational framing is controlled by the Writer prompt,
 while source verification remains an important future extension.
 
-## Current Limitations
+## V1 Limitations
 
 - Steps execute sequentially.
 - The workflow stops at the first failed step.
@@ -182,7 +199,9 @@ while source verification remains an important future extension.
 
 - Add minimal unit tests for schemas and deterministic validators.
 - Add source deduplication and citation verification.
-- Add retry policies for recoverable tool failures.
-- Explore replanning and parallel research branches.
-- Reimplement the workflow with LangGraph for comparison after the pure-Python
-  version is complete.
+- Add structured scoping and research brief generation in V2.
+- Replace the static research plan with an observation-driven Supervisor loop.
+- Add context-isolated Research Workers and evidence compression.
+- Add bounded parallel research with `asyncio`.
+- Reuse V1 reflection and deterministic quality gates in the V2 report pipeline.
+- Compare the completed pure-Python architecture with a framework-based version.
