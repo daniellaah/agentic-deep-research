@@ -16,7 +16,8 @@ state, and reflection visible in ordinary Python code.
 
 Each notebook is independently runnable. V1 remains a stable teaching artifact,
 while V2 starts from the same executable baseline and replaces the static
-research workflow incrementally.
+research workflow incrementally. V2 currently includes structured clarification,
+human-in-the-loop conversation state, and research brief generation.
 
 ## V1 Architecture
 
@@ -61,14 +62,25 @@ observed and criticized before the final revision is produced.
 
 ```text
 .
+├── src/
+│   └── agentic_deepresearch/
+│       ├── __init__.py            # Public package interface
+│       ├── schemas.py             # Shared Pydantic data contracts
+│       └── tools.py               # arXiv and Tavily tools
 ├── notebooks/
 │   ├── 01_v1_static_multi_agent_workflow.ipynb
 │   └── 02_v2_adaptive_deep_research.ipynb
-├── agent_schema.py                # TaskPlan and PlanStep schemas
-├── agent_tools.py                 # arXiv and Tavily tools
 ├── .env.example                   # Environment variable template
 ├── pyproject.toml                 # Python dependencies and tool configuration
 └── final_report.md                # Generated after a successful run
+```
+
+Reusable code uses an installable `src` package. The notebooks therefore use
+absolute imports that do not depend on the Jupyter working directory:
+
+```python
+from agentic_deepresearch import schemas
+from agentic_deepresearch.tools import arxiv_search_tool
 ```
 
 ## Requirements
@@ -85,6 +97,9 @@ Install the environment:
 ```bash
 uv sync --dev
 ```
+
+This installs both the dependencies and the local `agentic_deepresearch`
+package into `.venv`.
 
 Create the local environment file:
 
@@ -199,7 +214,6 @@ while source verification remains an important future extension.
 
 - Add minimal unit tests for schemas and deterministic validators.
 - Add source deduplication and citation verification.
-- Add structured scoping and research brief generation in V2.
 - Replace the static research plan with an observation-driven Supervisor loop.
 - Add context-isolated Research Workers and evidence compression.
 - Add bounded parallel research with `asyncio`.

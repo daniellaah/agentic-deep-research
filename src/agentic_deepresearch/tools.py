@@ -15,9 +15,7 @@ __all__ = [
 
 
 _ARXIV_SESSION = requests.Session()
-_ARXIV_SESSION.headers.update(
-    {"User-Agent": "LF-ADP-Agent/1.0 (mailto:your.email@example.com)"}
-)
+_ARXIV_SESSION.headers.update({"User-Agent": "LF-ADP-Agent/1.0 (mailto:your.email@example.com)"})
 
 
 def _required_text(
@@ -150,10 +148,7 @@ def tavily_search_tool(
         ]
 
         if include_images:
-            results.extend(
-                {"image_url": image_url}
-                for image_url in response.get("images", [])
-            )
+            results.extend({"image_url": image_url} for image_url in response.get("images", []))
 
         return results
     except Exception as exc:  # noqa: BLE001 - return tool failures to the agent
