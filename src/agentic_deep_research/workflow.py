@@ -1,4 +1,4 @@
-"""V1 static deep research workflow."""
+"""Static deep research workflow."""
 
 
 def run_research(topic: str) -> None:

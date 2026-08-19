@@ -1,11 +1,53 @@
 # Agentic Deep Research
 
-A learning-first project for building a product-grade deep research agent step by step.
+Agentic Deep Research is a Python project for building a reliable deep research agent with testable workflows and clear model and tool boundaries.
 
-## Current Development
+## Requirements
 
-The product code is being rebuilt from V1 with tests and a GitHub pull-request workflow.
+- Python 3.12
+- [uv](https://docs.astral.sh/uv/)
 
-## Reference Notebooks
+## Setup
 
-The previous V1–V8 learning notebooks are preserved in [`notebooks/reference/`](notebooks/reference/).
+Clone the repository:
+
+```bash
+git clone https://github.com/daniellaah/agentic-deep-research.git
+cd agentic-deep-research
+```
+
+Install the project and development dependencies:
+
+```bash
+uv sync --dev
+```
+
+Create the local environment file:
+
+```bash
+cp .env.example .env
+```
+
+Configure the environment variables required by the integrations you use:
+
+```dotenv
+OPENAI_API_KEY=
+TAVILY_API_KEY=
+MODEL_NAME=
+```
+
+Do not commit `.env` or API keys.
+
+## Quality Checks
+
+Run the test suite:
+
+```bash
+uv run pytest
+```
+
+Run the code-quality checks:
+
+```bash
+uv run ruff check src tests
+```
