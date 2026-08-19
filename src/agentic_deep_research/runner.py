@@ -1,6 +1,16 @@
 """Agent execution through the OpenAI Responses API."""
 
+from typing import Protocol
+
 from openai import OpenAI
+
+
+class AgentRunner(Protocol):
+    """Interface for executing agent tasks."""
+
+    def run(self, *, instructions: str, task: str) -> str:
+        """Execute an agent task and return its generated text."""
+        ...
 
 
 class OpenAIAgentRunner:
