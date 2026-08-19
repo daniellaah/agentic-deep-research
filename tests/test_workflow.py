@@ -1,6 +1,6 @@
 import pytest
 
-from agentic_deepresearch import run_research
+from agentic_deep_research import run_research
 
 
 def test_run_research_rejects_blank_topic() -> None:
