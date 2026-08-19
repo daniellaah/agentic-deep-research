@@ -1,86 +1,41 @@
-"""Static deep research workflow."""
+"""Bounded web-research workflow."""
 
-from .models import ResearchResult
+from .models import ResearchRequest, ResearchResult
 from .runner import AgentRunner
 
-_RESEARCH_PLANNER_INSTRUCTIONS = (
-    "You are a research planner. "
-    "Create a concise research plan for the given topic."
-)
-
-_RESEARCHER_INSTRUCTIONS = (
-    "You are a research analyst. "
-    "Develop detailed research notes from the topic and plan. "
-    "Clearly distinguish assumptions from supported statements."
-)
-
-_WRITER_INSTRUCTIONS = (
-    "You are a report writer. "
-    "Create a clear draft report from the research plan and notes."
-)
-
-_EDITOR_INSTRUCTIONS = (
-    "You are a report editor. "
-    "Review the draft for clarity, completeness, and logical consistency. "
-    "Return actionable editorial feedback."
-)
-
-_REVISER_INSTRUCTIONS = (
-    "You are a report writer. "
-    "Revise the draft using the editorial feedback. "
-    "Return only the final report."
-)
+_RESEARCH_INSTRUCTIONS = """You are a rigorous web research agent.
+Search the web iteratively, open the most useful pages, and continue until the question is
+answered with sufficient evidence or the tool budget is exhausted. Prefer primary and recent
+sources, resolve important contradictions, and do not make unsupported factual claims.
+Write a clear report with visible inline citations for factual claims.
+"""
 
 
-def run_research(topic: str, *, runner: AgentRunner) -> ResearchResult:
-    """Generate a reviewed final report for a non-empty topic."""
-    if not topic.strip():
-        raise ValueError("research topic must not be empty")
+def run_research(
+    request: str | ResearchRequest,
+    *,
+    runner: AgentRunner,
+) -> ResearchResult:
+    """Research a topic on the web within an explicit execution budget."""
+    if isinstance(request, str):
+        request = ResearchRequest(topic=request)
 
-    plan = runner.run(
-        instructions=_RESEARCH_PLANNER_INSTRUCTIONS,
-        task=topic,
-    )
-
-    research_notes = runner.run(
-        instructions=_RESEARCHER_INSTRUCTIONS,
+    run = runner.run(
+        instructions=_RESEARCH_INSTRUCTIONS,
         task=(
-            f"Topic:\n{topic}\n\n"
-            f"Research plan:\n{plan}"
+            f"Research topic:\n{request.topic.strip()}\n\n"
+            f"Write the final report in {request.language}."
         ),
-    )
-
-    draft_report = runner.run(
-        instructions=_WRITER_INSTRUCTIONS,
-        task=(
-            f"Topic:\n{topic}\n\n"
-            f"Research plan:\n{plan}\n\n"
-            f"Research notes:\n{research_notes}"
-        ),
-    )
-
-    editorial_feedback = runner.run(
-        instructions=_EDITOR_INSTRUCTIONS,
-        task=(
-            f"Topic:\n{topic}\n\n"
-            f"Draft report:\n{draft_report}"
-        ),
-    )
-
-    final_report = runner.run(
-        instructions=_REVISER_INSTRUCTIONS,
-        task=(
-            f"Topic:\n{topic}\n\n"
-            f"Draft report:\n{draft_report}\n\n"
-            f"Editorial feedback:\n{editorial_feedback}"
-        ),
+        budget=request.budget,
     )
 
     return ResearchResult(
-        topic=topic,
-        plan=plan,
-        research_notes=research_notes,
-        draft_report=draft_report,
-        editorial_feedback=editorial_feedback,
-        final_report=final_report,
+        topic=request.topic.strip(),
+        report=run.report,
+        sources=run.sources,
+        citations=run.citations,
+        trace=run.trace,
+        status=run.status,
+        stop_reason=run.stop_reason,
+        usage=run.usage,
     )
