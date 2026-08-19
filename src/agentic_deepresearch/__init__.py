@@ -1,41 +1,5 @@
-"""Pure-Python building blocks for the Agentic Deep Researcher project."""
+"""Public interface for the Agentic Deep Research package."""
 
-from .schemas import (
-    AgentArtifact,
-    AgentName,
-    ArtifactStatus,
-    ClarificationDecision,
-    ConversationMessage,
-    ConversationRole,
-    ObservationAssessment,
-    PlanStep,
-    ResearchBrief,
-    ScopeOutcome,
-    SupervisorAction,
-    SupervisorDecision,
-    SupervisorObservation,
-    SupervisorState,
-    SupervisorStatus,
-    TaskPlan,
-    WorkerAction,
-)
+from .workflow import run_research
 
-__all__ = [
-    "AgentArtifact",
-    "AgentName",
-    "ArtifactStatus",
-    "ClarificationDecision",
-    "ConversationMessage",
-    "ConversationRole",
-    "ObservationAssessment",
-    "PlanStep",
-    "ResearchBrief",
-    "ScopeOutcome",
-    "SupervisorAction",
-    "SupervisorDecision",
-    "SupervisorObservation",
-    "SupervisorState",
-    "SupervisorStatus",
-    "TaskPlan",
-    "WorkerAction",
-]
+__all__ = ["run_research"]
