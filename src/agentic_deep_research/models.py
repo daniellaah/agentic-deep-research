@@ -1,6 +1,14 @@
 """Domain models for a bounded web-research run."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
+from typing import Literal
+
+VerificationStatus = Literal[
+    "unverified",
+    "supported",
+    "unsupported",
+    "uncertain",
+]
 
 
 @dataclass(frozen=True)
@@ -58,6 +66,8 @@ class Source:
     title: str
     url: str
     quality: str = "unknown"
+    id: str = field(default="", compare=False)
+    canonical_url: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)
@@ -86,6 +96,7 @@ class Citation:
     source: Source
     start_index: int
     end_index: int
+    evidence_id: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)
@@ -96,6 +107,7 @@ class CitationClaim:
     source: Source
     marker: str
     claim_id: str = ""
+    evidence_id: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)
@@ -107,6 +119,7 @@ class CitationCheck:
     status: str
     reason: str
     claim_id: str = ""
+    evidence_id: str = field(default="", compare=False)
 
 
 @dataclass(frozen=True)
@@ -116,8 +129,17 @@ class Evidence:
     claim: str
     source: Source
     question_id: str = ""
-    excerpt: str = ""
+    excerpt: str = field(default="", compare=False)
     confidence: str = "medium"
+    id: str = field(default="", compare=False)
+    verification_status: VerificationStatus = field(
+        default="unverified",
+        compare=False,
+    )
+    origin_artifact_id: str = field(default="", compare=False)
+    origin_start_index: int = field(default=-1, compare=False)
+    origin_end_index: int = field(default=-1, compare=False)
+    corroboration_count: int = field(default=1, compare=False)
 
 
 @dataclass(frozen=True)
@@ -127,6 +149,67 @@ class EvidenceConflict:
     question_id: str
     description: str
     sources: tuple[Source, ...] = ()
+
+
+@dataclass(frozen=True)
+class EvidenceLedger:
+    """Immutable provenance snapshot accumulated during one research run."""
+
+    schema_version: int = 1
+    sources: tuple[Source, ...] = ()
+    evidence: tuple[Evidence, ...] = ()
+    conflicts: tuple[EvidenceConflict, ...] = ()
+    checks: tuple[CitationCheck, ...] = ()
+
+    @property
+    def entries(self) -> tuple[Evidence, ...]:
+        """Return evidence records using ledger terminology."""
+        return self.evidence
+
+    def with_checks(self, checks: tuple[CitationCheck, ...]) -> "EvidenceLedger":
+        """Return a snapshot with citation checks linked to evidence records."""
+        status_priority = {
+            "supported": 1,
+            "uncertain": 2,
+            "unsupported": 3,
+        }
+        statuses: dict[str, str] = {}
+        for check in checks:
+            if not check.evidence_id:
+                continue
+            status = (
+                check.status
+                if check.status in status_priority
+                else "uncertain"
+            )
+            current = statuses.get(check.evidence_id)
+            if current is None or status_priority[status] > status_priority[current]:
+                statuses[check.evidence_id] = status
+
+        evidence = tuple(
+            replace(
+                item,
+                verification_status=statuses.get(
+                    item.id,
+                    item.verification_status,
+                ),
+            )
+            for item in self.evidence
+        )
+        return replace(self, evidence=evidence, checks=checks)
+
+
+@dataclass(frozen=True)
+class ResearchPacket:
+    """Normalized output of ingesting one worker run into the evidence ledger."""
+
+    question_id: str
+    answer: str
+    evidence: tuple[Evidence, ...] = ()
+    conflicts: tuple[EvidenceConflict, ...] = ()
+    artifact_id: str = ""
+    status: str = "completed"
+    stop_reason: str = "completed"
 
 
 @dataclass(frozen=True)
@@ -159,6 +242,7 @@ class AgentRun:
     stop_reason: str = "completed"
     usage: TokenUsage = field(default_factory=TokenUsage)
     conflicts: tuple[EvidenceConflict, ...] = ()
+    evidence: tuple[Evidence, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -247,3 +331,4 @@ class ResearchResult:
     critique: ReportCritique | None = None
     citation_checks: tuple[CitationCheck, ...] = ()
     revision_count: int = 0
+    ledger: EvidenceLedger | None = None

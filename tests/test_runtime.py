@@ -133,6 +133,8 @@ def test_resume_reuses_completed_effects_after_a_process_failure(tmp_path) -> No
     assert resumed.state.status == "completed"
     assert resumed.result is not None
     assert resumed.result.status == "completed"
+    assert resumed.result.ledger is not None
+    assert all(item.id for item in resumed.result.ledger.evidence)
     assert planner.call_count == 1
     assert runner.calls == {"First question": 1, "Second question": 2}
 

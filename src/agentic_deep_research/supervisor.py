@@ -9,6 +9,7 @@ from .models import (
     AgentRun,
     Evidence,
     EvidenceConflict,
+    EvidenceLedger,
     ResearchArtifact,
     ResearchBudget,
     ResearchPlan,
@@ -33,10 +34,23 @@ class SupervisorResult:
     status: str
     stop_reason: str
     planning_usage: TokenUsage
-    sources: tuple[Source, ...]
-    evidence: tuple[Evidence, ...]
-    conflicts: tuple[EvidenceConflict, ...]
+    ledger: EvidenceLedger
     artifacts: tuple[ResearchArtifact, ...]
+
+    @property
+    def sources(self) -> tuple[Source, ...]:
+        """Compatibility view over the ledger's canonical sources."""
+        return self.ledger.sources
+
+    @property
+    def evidence(self) -> tuple[Evidence, ...]:
+        """Compatibility view over the ledger's evidence entries."""
+        return self.ledger.evidence
+
+    @property
+    def conflicts(self) -> tuple[EvidenceConflict, ...]:
+        """Compatibility view over the ledger's recorded conflicts."""
+        return self.ledger.conflicts
 
 
 class ResearchSupervisor:
@@ -143,15 +157,18 @@ class ResearchSupervisor:
             runs.extend(zip(batch, batch_runs, strict=True))
             used_tool_calls = 0
             for question, run in zip(batch, batch_runs, strict=True):
-                evidence_store.add_run(question.id, run)
-                artifacts.append(
-                    ResearchArtifact(
-                        id=f"finding:{question.id}",
-                        kind="worker_finding",
-                        content=run.report,
-                        question_id=question.id,
-                    )
+                artifact = ResearchArtifact(
+                    id=f"finding:{question.id}",
+                    kind="worker_finding",
+                    content=run.report,
+                    question_id=question.id,
                 )
+                evidence_store.ingest_run(
+                    question.id,
+                    run,
+                    artifact_id=artifact.id,
+                )
+                artifacts.append(artifact)
                 trace.extend(run.trace)
                 used_tool_calls += sum(step.kind == "tool" for step in run.trace)
                 trace.append(
@@ -244,9 +261,7 @@ class ResearchSupervisor:
             ),
             stop_reason=stop_reason,
             planning_usage=_sum_usage(*(item.usage for item in planning_runs)),
-            sources=evidence_store.sources,
-            evidence=evidence_store.evidence,
-            conflicts=evidence_store.conflicts,
+            ledger=evidence_store.snapshot(),
             artifacts=tuple(artifacts),
         )
 
