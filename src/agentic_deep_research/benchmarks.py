@@ -188,6 +188,7 @@ def _evaluate_case(
             "sources": [],
             "evidence": [],
             "citation_checks": [],
+            "finding_outcomes": [],
             "trace": [],
             "metadata": case.metadata,
             "run_metadata": run_metadata,
@@ -227,6 +228,16 @@ def _evaluate_case(
         "sources": [asdict(source) for source in result.sources],
         "evidence": [asdict(item) for item in result.evidence],
         "citation_checks": [asdict(item) for item in result.citation_checks],
+        "finding_outcomes": [
+            {
+                "question_id": item.question_id,
+                "status": item.status,
+                "stop_reason": item.stop_reason,
+                "source_count": len(item.sources),
+                "evidence_count": len(item.evidence),
+            }
+            for item in result.findings
+        ],
         "trace": [asdict(step) for step in result.trace],
         "metadata": case.metadata,
         "run_metadata": run_metadata,

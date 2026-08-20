@@ -164,7 +164,7 @@ uv run --group benchmark deep-research-eval run browsecomp-plus \
   --limit 10
 ```
 
-Each case is appended to JSONL immediately, including citation checks and revision count. Re-running the same command resumes by case ID, while changing model or budget configuration raises an error instead of mixing incomparable results. Dataset files and raw runs are Git-ignored.
+Each case is appended to JSONL immediately, including citation checks, per-worker outcomes, and revision count. Re-running the same command resumes by case ID, while changing model or budget configuration raises an error instead of mixing incomparable results. Dataset files and raw runs are Git-ignored.
 
 These commands use the verified adaptive live-web development protocol. A leaderboard-comparable BrowseComp-Plus run must instead use its fixed corpus, retriever, document IDs, and official judge. See the [recorded pre-adaptive development baselines](docs/baselines.md) for historical results and limitations.
 

@@ -2,7 +2,13 @@ import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from agentic_deep_research import CitationCheck, ResearchResult, Source, TokenUsage
+from agentic_deep_research import (
+    CitationCheck,
+    ResearchFinding,
+    ResearchResult,
+    Source,
+    TokenUsage,
+)
 from agentic_deep_research.benchmarks import (
     BenchmarkCase,
     ExactMatchJudge,
@@ -32,6 +38,15 @@ def _result(topic: str, report: str) -> ResearchResult:
                 status="supported",
                 reason="The source supports it.",
                 claim_id="C1",
+            ),
+        ),
+        findings=(
+            ResearchFinding(
+                question_id="q1",
+                question="A benchmark subquestion?",
+                answer="A worker answer.",
+                status="incomplete",
+                stop_reason="max_tool_calls",
             ),
         ),
         revision_count=1,
@@ -76,6 +91,15 @@ def test_run_benchmark_scores_cases_and_resumes_from_jsonl(tmp_path) -> None:
     assert [record["correct"] for record in records] == [True, False]
     assert records[0]["revision_count"] == 1
     assert records[0]["citation_checks"][0]["status"] == "supported"
+    assert records[0]["finding_outcomes"] == [
+        {
+            "question_id": "q1",
+            "status": "incomplete",
+            "stop_reason": "max_tool_calls",
+            "source_count": 0,
+            "evidence_count": 0,
+        }
+    ]
 
     calls.clear()
     resumed = run_benchmark(

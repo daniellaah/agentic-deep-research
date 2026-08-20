@@ -35,3 +35,40 @@ These are development baselines, not official full-benchmark scores:
 - The aggregate wall times above come from whole CLI runs. Per-case elapsed time is recorded by the harness for future runs, but was added after these two baselines.
 
 Official sources: [FRAMES dataset](https://huggingface.co/datasets/google/frames-benchmark), [FRAMES paper](https://arxiv.org/abs/2409.12941), and [BrowseComp-Plus repository](https://github.com/texttron/BrowseComp-Plus).
+
+## Verified adaptive calibration
+
+A one-case calibration was run after adding adaptive planning, evidence-aware workers,
+report critique, semantic citation verification, gap search, and bounded revision. This is a
+pipeline calibration, not an accuracy comparison with the 10-case baseline above.
+
+- Evaluation date: 2026-08-19
+- Agent and judge model: `gpt-5-nano`
+- Sample: deterministic first case from each local development dataset
+- Maximum research web-tool calls: 4 per case
+- Maximum research steps: 2 per case
+- Maximum output tokens: 10,000 per model response
+- Maximum citation-verification calls: 1 per case
+- Maximum report revisions: 1 per case
+- Execution: sequential, one run per benchmark
+
+| Benchmark | Completed | Correct | Trace tool actions | Sources | Tokens | Latency | Final stop reason |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| FRAMES calibration-1 | 0/1 | not judged | 7 | 67 | 85,752 | 308.8 s | `research_budget_exhausted` |
+| BrowseComp-Plus calibration-1 | 0/1 | not judged | 6 | 59 | 65,053 | 152.7 s | `max_research_steps` |
+
+The calibration exposed three concrete bottlenecks:
+
+1. A low structured-output limit can end a reasoning-model response before its JSON is
+   complete. The planner now reports provider incompleteness before attempting JSON parsing,
+   and CLI/benchmark output limits are passed consistently to planner and report stages.
+2. Large search-result lists do not guarantee usable evidence. Both BrowseComp workers
+   completed but produced no citation-linked Evidence, so replanning consumed the remaining
+   research-step budget without resolving the evidence gap.
+3. The quality gate correctly prevented judging weak outputs. The FRAMES report retained one
+   unsupported and four uncertain citation checks; the BrowseComp report retained one
+   unsupported check.
+
+The `tool_calls` development metric currently counts observable search, open-page, and
+find-in-page actions. It should be read as trace tool actions, not as a provider billing count.
+The next optimization target is evidence yield per action, not a larger search budget.
