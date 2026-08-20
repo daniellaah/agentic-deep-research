@@ -1,5 +1,22 @@
 """Public interface for the Agentic Deep Research package."""
 
+from .benchmarks import BenchmarkCase, ExactMatchJudge, Judgment, OpenAIAnswerJudge
+from .corpus import (
+    CorpusDocument,
+    InMemoryCorpusBackend,
+    JsonlCorpusBackend,
+    OpenAIFixedCorpusRunner,
+    SearchBackend,
+    SearchHit,
+)
+from .evaluation import (
+    DurableCaseExecutor,
+    EvaluationManifest,
+    EvaluationOrchestrator,
+    EvaluationSummary,
+    ReplayCaseExecutor,
+    TrajectoryMetrics,
+)
 from .models import (
     AgentRun,
     Citation,
@@ -25,6 +42,16 @@ from .models import (
     TokenUsage,
     VerificationStatus,
 )
+from .report_evaluation import (
+    DeterministicReportJudge,
+    OpenAIReportJudge,
+    ReportJudgeError,
+    ReportJudgment,
+    RubricCriterion,
+    RubricScore,
+    deterministic_report_grader_id,
+    openai_report_grader_id,
+)
 from .runtime import (
     JsonCheckpointStore,
     ResearchRuntime,
@@ -37,17 +64,34 @@ from .workflow import run_research
 
 __all__ = [
     "AgentRun",
+    "BenchmarkCase",
     "Citation",
     "CitationCheck",
     "CitationClaim",
     "CitationVerification",
+    "CorpusDocument",
+    "DeterministicReportJudge",
+    "DurableCaseExecutor",
+    "EvaluationManifest",
+    "EvaluationOrchestrator",
+    "EvaluationSummary",
     "Evidence",
     "EvidenceConflict",
     "EvidenceLedger",
+    "ExactMatchJudge",
+    "InMemoryCorpusBackend",
     "JsonCheckpointStore",
+    "JsonlCorpusBackend",
+    "Judgment",
+    "OpenAIAnswerJudge",
+    "OpenAIFixedCorpusRunner",
+    "OpenAIReportJudge",
     "PlanningRun",
+    "ReplayCaseExecutor",
     "ReportCritique",
     "ReportDraft",
+    "ReportJudgeError",
+    "ReportJudgment",
     "ResearchArtifact",
     "ResearchBudget",
     "ResearchFinding",
@@ -59,11 +103,18 @@ __all__ = [
     "ResearchRuntime",
     "ResearchStep",
     "RetryPolicy",
+    "RubricCriterion",
+    "RubricScore",
     "RunState",
     "RuntimeOutcome",
     "SQLiteCheckpointStore",
+    "SearchBackend",
+    "SearchHit",
     "Source",
     "TokenUsage",
+    "TrajectoryMetrics",
     "VerificationStatus",
+    "deterministic_report_grader_id",
+    "openai_report_grader_id",
     "run_research",
 ]

@@ -457,7 +457,7 @@ def _component_fingerprint(component: object) -> dict[str, object]:
     fingerprint: dict[str, object] = {
         "type": f"{type(component).__module__}.{type(component).__qualname__}",
     }
-    for attribute in ("_model", "_max_output_tokens"):
+    for attribute in ("_model", "_max_output_tokens", "_corpus_sha256"):
         value = getattr(component, attribute, None)
         if isinstance(value, (str, int, float, bool)):
             fingerprint[attribute.removeprefix("_")] = value

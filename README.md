@@ -184,7 +184,8 @@ Install the isolated benchmark dependencies:
 uv sync --group benchmark
 ```
 
-Download the official FRAMES cases and run a fixed 10-case development slice:
+Download the official FRAMES cases and start a named, resumable 10-case live-web
+experiment:
 
 ```bash
 uv run --group benchmark deep-research-eval download frames \
@@ -192,11 +193,13 @@ uv run --group benchmark deep-research-eval download frames \
 
 uv run --group benchmark deep-research-eval run frames \
   --data .benchmarks/data/frames.jsonl \
-  --output .benchmarks/runs/frames-dev10.jsonl \
+  --experiment-dir .benchmarks/experiments/frames-dev10 \
+  --experiment-id frames-dev10-live-web-v2 \
   --limit 10
 ```
 
-Download only the first 10 encrypted BrowseComp-Plus cases through streaming and run the same development protocol:
+Download only the first 10 encrypted BrowseComp-Plus cases through streaming and
+run the same development protocol:
 
 ```bash
 uv run --group benchmark deep-research-eval download browsecomp-plus \
@@ -205,13 +208,75 @@ uv run --group benchmark deep-research-eval download browsecomp-plus \
 
 uv run --group benchmark deep-research-eval run browsecomp-plus \
   --data .benchmarks/data/browsecomp-plus-dev10.jsonl \
-  --output .benchmarks/runs/browsecomp-plus-dev10.jsonl \
+  --experiment-dir .benchmarks/experiments/browsecomp-plus-dev10 \
+  --experiment-id browsecomp-plus-dev10-live-web-v2 \
   --limit 10
 ```
 
-Each case is appended to JSONL immediately, including citation checks, per-worker outcomes, and revision count. Re-running the same command resumes by case ID, while changing model or budget configuration raises an error instead of mixing incomparable results. Dataset files and raw runs are Git-ignored.
+Each experiment directory contains an immutable `manifest.json`, durable research
+checkpoints, privacy-conscious case records, and an aggregate summary. The manifest
+binds the selected case content, model, research budget, retry policy, search
+protocol, citation policy, and grader version. Re-running the same command reuses a
+completed case, resumes an interrupted research case, or retries only the judge when
+research already completed. Changing a bound setting raises an error instead of
+mixing incomparable results.
 
-These commands use the verified adaptive live-web development protocol. A leaderboard-comparable BrowseComp-Plus run must instead use its fixed corpus, retriever, document IDs, and official judge. See the [recorded pre-adaptive development baselines](docs/baselines.md) for historical results and limitations.
+Replay already checkpointed research without running the research agent again:
+
+```bash
+uv run --group benchmark deep-research-eval replay frames \
+  --data .benchmarks/data/frames.jsonl \
+  --experiment-dir .benchmarks/experiments/frames-dev10
+```
+
+Replay of an experiment originally configured with `--judge exact` and no OpenAI
+report judge is fully local. If the saved manifest uses an OpenAI answer judge or
+report judge, replay can still make grader calls for cases whose judgment is missing;
+it never makes research calls. Provider errors remain distinct from wrong answers,
+and summaries report both total-slice accuracy and accuracy among completed
+judgments.
+
+For deterministic retrieval experiments, provide a JSONL corpus whose records contain
+`id`, `title`, `text`, and an optional `url`:
+
+```bash
+uv run --group benchmark deep-research-eval run frames \
+  --data .benchmarks/data/frames.jsonl \
+  --experiment-dir .benchmarks/experiments/frames-fixed-dev10 \
+  --experiment-id frames-dev10-fixed-corpus-v1 \
+  --search-protocol fixed-corpus \
+  --corpus .benchmarks/corpora/research-corpus.jsonl \
+  --limit 10
+```
+
+Fixed-corpus mode fingerprints the complete corpus, uses deterministic lexical
+search and reads, and does not grant the research or citation-verification stages Web
+Search. This makes retrieval changes repeatable, but it is a local development
+protocol—not automatically an official BrowseComp-Plus run. Official comparability
+still requires the benchmark's released corpus, document mapping, retriever, and
+grader protocol.
+
+Optionally add a deterministic report-quality gate or a structured model rubric:
+
+```bash
+uv run --group benchmark deep-research-eval run frames \
+  --data .benchmarks/data/frames.jsonl \
+  --experiment-dir .benchmarks/experiments/frames-report-dev10 \
+  --experiment-id frames-dev10-report-rubric-v1 \
+  --report-judge openai \
+  --report-judge-model "$JUDGE_MODEL_NAME" \
+  --limit 10
+```
+
+The long-report rubric scores explicit criteria with strict structured output. Judge
+failures are recorded as retryable evaluation errors, never silently converted into
+a zero-quality report. Dataset files, corpora, checkpoints, and experiment records
+are Git-ignored; they may still contain sensitive research data and should be handled
+accordingly.
+
+The default commands use the verified adaptive live-web development protocol. See
+the [recorded pre-adaptive development baselines](docs/baselines.md) for historical
+results and limitations.
 
 ## Quality Checks
 
