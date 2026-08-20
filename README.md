@@ -2,7 +2,7 @@
 
 Agentic Deep Research is a Python project for building a reliable deep research agent with testable workflows and clear model and tool boundaries.
 
-The current engine uses the OpenAI Responses API inside a small, explicit agent harness. An adaptive planner creates research questions, a deterministic supervisor enforces global limits, independent workers investigate questions in bounded parallel batches, and an evidence store carries only compact citation-linked context between batches. A writer then synthesizes a report from controlled source markers, while a critic and citation verifier drive bounded gap-search and revision rounds. A durable runtime checkpoints every provider-facing operation so an interrupted run can resume without repeating work that was already saved.
+The current engine uses the OpenAI Responses API inside a small, explicit agent harness. An adaptive planner creates research questions, a deterministic supervisor enforces global limits and evidence sufficiency, and independent workers investigate questions in bounded parallel batches. A source-diverse `ContextPack` carries only complete citation-linked records between batches instead of truncating arbitrary text. A writer then synthesizes a report from controlled source markers, while a critic and citation verifier drive bounded gap-search and revision rounds. A durable runtime checkpoints every provider-facing operation so an interrupted run can resume without repeating work that was already saved.
 
 The result contains the research plan, cited findings, a versioned evidence ledger, reported conflicts, draft and revision artifacts, citation-support judgments, observable control and web actions, stop reason, and token usage. Private model reasoning is never stored.
 
@@ -16,10 +16,10 @@ The core flow is:
 ResearchRequest
   -> Durable Runtime (checkpoint, retry, approval, cancellation)
   -> Adaptive Planner
-  -> Supervisor (budget, scheduling, stop conditions, replanning)
+  -> Supervisor (budget, scheduling, deterministic sufficiency, replanning)
   -> Independent Research Workers (Responses API + web_search)
   -> Evidence Ledger (stable identity, provenance, deduplication, conflicts)
-  -> Bounded Context Builder
+  -> ContextPack (whole evidence records, conflicts, selection metadata)
   -> Report Writer (evidence-bound [E1], [E2], ... markers)
   -> Critic + Citation Verifier
   -> Gap Search + Reviser (bounded quality loop)
@@ -115,7 +115,20 @@ uv run deep-research \
   --show-trace
 ```
 
-The planner chooses the highest-value subquestions. The supervisor decides what runs next and stops at the global tool or research-step limits. `--max-context-chars` prevents previous findings from growing every later prompt; full outputs remain available as artifacts. The verifier has its own web-tool budget because reopening cited pages is a separate reliability step. The revision limit guarantees that critique, gap search, and rewriting cannot loop forever.
+The planner chooses the highest-value subquestions. After each complete research round,
+the supervisor deterministically checks that every active question has usable evidence
+from a completed worker and that `min_sources` distinct canonical sources are actually
+bound to evidence. Merely visiting a URL does not satisfy the source minimum. It then
+either continues, stops at a global tool or research-step boundary, or reports a
+specific stalled state such as `no_new_evidence` or `no_new_questions`.
+
+`--max-context-chars` prevents previous findings from growing every later prompt.
+Context selection favors the active question, verified or unverified usable evidence,
+corroboration, and source diversity. Evidence and conflict entries are complete JSONL
+records; an oversized record is omitted and counted instead of being cut in half. Full
+worker outputs remain available as artifacts. The verifier has its own web-tool budget
+because reopening cited pages is a separate reliability step. The revision limit
+guarantees that critique, gap search, and rewriting cannot loop forever.
 
 The same workflow is available from Python:
 
@@ -194,7 +207,7 @@ uv run --group benchmark deep-research-eval download frames \
 uv run --group benchmark deep-research-eval run frames \
   --data .benchmarks/data/frames.jsonl \
   --experiment-dir .benchmarks/experiments/frames-dev10 \
-  --experiment-id frames-dev10-live-web-v2 \
+  --experiment-id frames-dev10-live-web-v3 \
   --limit 10
 ```
 
@@ -209,7 +222,7 @@ uv run --group benchmark deep-research-eval download browsecomp-plus \
 uv run --group benchmark deep-research-eval run browsecomp-plus \
   --data .benchmarks/data/browsecomp-plus-dev10.jsonl \
   --experiment-dir .benchmarks/experiments/browsecomp-plus-dev10 \
-  --experiment-id browsecomp-plus-dev10-live-web-v2 \
+  --experiment-id browsecomp-plus-dev10-live-web-v3 \
   --limit 10
 ```
 

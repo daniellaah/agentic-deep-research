@@ -221,7 +221,16 @@ def run_research(
                 gap_supervision = ResearchSupervisor(
                     planner=_GapPlanner(selected_gaps, revision_count + 1),
                     runner=runner,
-                ).run(gap_request)
+                ).run(
+                    gap_request,
+                    initial_ledger=material.ledger,
+                    initial_completed_question_ids=frozenset(
+                        finding.question_id
+                        for finding in material.findings
+                        if finding.status == "completed"
+                    ),
+                    initial_max_questions=len(selected_gaps),
+                )
                 supervisions.append(gap_supervision)
                 trace.extend(gap_supervision.trace)
                 artifacts.extend(gap_supervision.artifacts)
@@ -321,14 +330,11 @@ def _build_material(
     runs: list[tuple[str, str, AgentRun]] = []
     questions: list[ResearchQuestion] = []
     usage: list[TokenUsage] = []
-    status = "completed"
-    stop_reason = "completed"
+    status = supervisions[-1].status
+    stop_reason = supervisions[-1].stop_reason
     for supervision in supervisions:
         questions.extend(supervision.plan.questions)
         usage.append(supervision.planning_usage)
-        if supervision.status != "completed" and status == "completed":
-            status = supervision.status
-            stop_reason = supervision.stop_reason
         for question, run in supervision.runs:
             runs.append((question.id, question.question, run))
             usage.append(run.usage)

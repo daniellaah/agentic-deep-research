@@ -97,7 +97,7 @@ def test_run_research_returns_grounded_report_and_execution_metadata() -> None:
     assert budget.max_output_tokens == request.budget.max_output_tokens
 
 
-def test_run_research_requires_enough_sources_before_marking_success() -> None:
+def test_run_research_marks_a_stalled_source_search_incomplete() -> None:
     runner = FakeAgentRunner(
         AgentRun(
             report="An unsupported report.",
@@ -109,8 +109,8 @@ def test_run_research_requires_enough_sources_before_marking_success() -> None:
 
     result = run_research(request, runner=runner)
 
-    assert result.status == "needs_review"
-    assert result.stop_reason == "insufficient_sources"
+    assert result.status == "incomplete"
+    assert result.stop_reason == "no_new_questions"
 
 
 def test_run_research_rejects_an_empty_final_report() -> None:
@@ -118,7 +118,16 @@ def test_run_research_rejects_an_empty_final_report() -> None:
         Source(title="One", url="https://example.com/one"),
         Source(title="Two", url="https://example.com/two"),
     )
-    runner = FakeAgentRunner(AgentRun(report="", sources=sources))
+    runner = FakeAgentRunner(
+        AgentRun(
+            report="",
+            sources=sources,
+            evidence=(
+                Evidence(claim="First grounded fact.", source=sources[0]),
+                Evidence(claim="Second grounded fact.", source=sources[1]),
+            ),
+        )
+    )
 
     result = run_research("Reliable agents", runner=runner)
 

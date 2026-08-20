@@ -47,7 +47,7 @@ class EvaluationManifest:
     corpus_sha256: str | None = None
     report_grader_version: str | None = None
     report_judge_model: str | None = None
-    protocol_version: str = "research-eval-v2"
+    protocol_version: str = "research-eval-v3"
     schema_version: int = 1
 
     def __post_init__(self) -> None:
@@ -111,7 +111,7 @@ class EvaluationManifest:
         corpus_sha256: str | None = None,
         report_grader_version: str | None = None,
         report_judge_model: str | None = None,
-        protocol_version: str = "research-eval-v2",
+        protocol_version: str = "research-eval-v3",
     ) -> EvaluationManifest:
         """Build a manifest whose dataset digest covers all selected case content."""
         selected = tuple(cases)
@@ -304,7 +304,7 @@ class DurableCaseExecutor:
         *,
         request_factory: Callable[[BenchmarkCase, EvaluationManifest], ResearchRequest]
         | None = None,
-        search_protocol: str = "verified-adaptive-live-web-v2",
+        search_protocol: str = "verified-adaptive-live-web-v3",
     ) -> None:
         self._runtime = runtime
         self._request_factory = request_factory or _default_request

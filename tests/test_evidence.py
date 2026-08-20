@@ -197,3 +197,44 @@ def test_ledger_with_checks_links_status_by_stable_evidence_id() -> None:
     assert ledger.evidence[0].verification_status == "unverified"
     assert checked.evidence[0].verification_status == "unsupported"
     assert checked.checks == (supported, unsupported)
+
+
+def test_evidence_store_can_continue_from_a_prior_ledger() -> None:
+    original = EvidenceStore()
+    original.ingest_run(
+        "q-prior",
+        _cited_run(
+            "Prior finding is measurable.",
+            "https://example.com/prior",
+        ),
+        artifact_id="finding:q-prior",
+    )
+    prior = original.snapshot()
+    supported = prior.with_checks(
+        (
+            CitationCheck(
+                claim=prior.evidence[0].claim,
+                source=prior.evidence[0].source,
+                status="supported",
+                reason="The source supports the claim.",
+                evidence_id=prior.evidence[0].id,
+            ),
+        )
+    )
+
+    resumed = EvidenceStore(supported)
+    resumed.ingest_run(
+        "q-new",
+        _cited_run(
+            "A new source corroborates the finding.",
+            "https://example.com/new",
+        ),
+        artifact_id="finding:q-new",
+    )
+    snapshot = resumed.snapshot()
+
+    assert snapshot.evidence[0].id == supported.evidence[0].id
+    assert snapshot.evidence[0].verification_status == "supported"
+    assert snapshot.evidence[0].origin_artifact_id == "finding:q-prior"
+    assert len(snapshot.sources) == 2
+    assert len(snapshot.evidence) == 2

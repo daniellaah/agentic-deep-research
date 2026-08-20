@@ -9,6 +9,48 @@ VerificationStatus = Literal[
     "unsupported",
     "uncertain",
 ]
+ContextPurpose = Literal["worker", "planner"]
+
+
+@dataclass(frozen=True)
+class BudgetSnapshot:
+    """Dynamic global capacity at one supervisor decision point."""
+
+    tool_calls_remaining: int
+    research_steps_remaining: int
+
+    def __post_init__(self) -> None:
+        if self.tool_calls_remaining < 0:
+            raise ValueError("tool_calls_remaining must not be negative")
+        if self.research_steps_remaining < 0:
+            raise ValueError("research_steps_remaining must not be negative")
+
+
+@dataclass(frozen=True)
+class ContextPack:
+    """Bounded context plus observable selection metadata."""
+
+    purpose: ContextPurpose
+    text: str
+    selected_evidence_ids: tuple[str, ...]
+    omitted_evidence_count: int
+    included_conflict_count: int
+    omitted_conflict_count: int
+    used_chars: int
+
+    def __post_init__(self) -> None:
+        if self.purpose not in {"worker", "planner"}:
+            raise ValueError("unsupported context purpose")
+        if len(set(self.selected_evidence_ids)) != len(self.selected_evidence_ids):
+            raise ValueError("selected_evidence_ids must be unique")
+        if self.omitted_evidence_count < 0:
+            raise ValueError("omitted_evidence_count must not be negative")
+        if self.included_conflict_count < 0:
+            raise ValueError("included_conflict_count must not be negative")
+        if self.omitted_conflict_count < 0:
+            raise ValueError("omitted_conflict_count must not be negative")
+        if self.used_chars != len(self.text):
+            raise ValueError("used_chars must equal len(text)")
 
 
 @dataclass(frozen=True)

@@ -19,10 +19,13 @@ from .evaluation import (
 )
 from .models import (
     AgentRun,
+    BudgetSnapshot,
     Citation,
     CitationCheck,
     CitationClaim,
     CitationVerification,
+    ContextPack,
+    ContextPurpose,
     Evidence,
     EvidenceConflict,
     EvidenceLedger,
@@ -42,6 +45,7 @@ from .models import (
     TokenUsage,
     VerificationStatus,
 )
+from .policy import ResearchDecision, SufficiencyPolicy
 from .report_evaluation import (
     DeterministicReportJudge,
     OpenAIReportJudge,
@@ -65,10 +69,13 @@ from .workflow import run_research
 __all__ = [
     "AgentRun",
     "BenchmarkCase",
+    "BudgetSnapshot",
     "Citation",
     "CitationCheck",
     "CitationClaim",
     "CitationVerification",
+    "ContextPack",
+    "ContextPurpose",
     "CorpusDocument",
     "DeterministicReportJudge",
     "DurableCaseExecutor",
@@ -94,6 +101,7 @@ __all__ = [
     "ReportJudgment",
     "ResearchArtifact",
     "ResearchBudget",
+    "ResearchDecision",
     "ResearchFinding",
     "ResearchPacket",
     "ResearchPlan",
@@ -111,6 +119,7 @@ __all__ = [
     "SearchBackend",
     "SearchHit",
     "Source",
+    "SufficiencyPolicy",
     "TokenUsage",
     "TrajectoryMetrics",
     "VerificationStatus",
