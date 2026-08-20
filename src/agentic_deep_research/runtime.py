@@ -79,6 +79,32 @@ class ResearchRuntime:
         self._sleeper = sleeper
         self._random_source = random_source
 
+    @property
+    def model_name(self) -> str:
+        """Return the runner model included in durable configuration identity."""
+        return _component_model(self._runner)
+
+    @property
+    def planner_model_name(self) -> str:
+        """Return the planner model, when the planner is model-backed."""
+        return _component_model(self._planner)
+
+    @property
+    def report_model_name(self) -> str:
+        """Return the report-agent model, when reporting is model-backed."""
+        return _component_model(self._report_agent)
+
+    @property
+    def corpus_sha256(self) -> str | None:
+        """Return the runner's fixed-corpus identity, when one is configured."""
+        value = getattr(self._runner, "corpus_sha256", None)
+        return value if isinstance(value, str) else None
+
+    @property
+    def retry_policy(self) -> RetryPolicy:
+        """Return the retry policy enforced and journaled by this runtime."""
+        return self._retry_policy
+
     def start(
         self,
         request: ResearchRequest,
