@@ -20,6 +20,7 @@ from .benchmarks import (
     run_benchmark,
 )
 from .models import ResearchBudget, ResearchRequest
+from .planning import OpenAIAdaptivePlanner
 from .runner import OpenAIAgentRunner
 from .workflow import run_research
 
@@ -54,9 +55,13 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     )
     client = OpenAI()
     runner = OpenAIAgentRunner(client=client, model=model)
+    planner = OpenAIAdaptivePlanner(client=client, model=model)
     budget = ResearchBudget(
         max_tool_calls=args.max_tool_calls,
         max_output_tokens=args.max_output_tokens,
+        max_research_steps=args.max_research_steps,
+        max_parallel_workers=args.max_parallel_workers,
+        max_context_chars=args.max_context_chars,
     )
 
     def research(question: str):
@@ -68,6 +73,7 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
                 min_sources=args.min_sources,
             ),
             runner=runner,
+            planner=planner,
         )
 
     judge = (
@@ -82,12 +88,15 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         judge=judge,
         output_path=args.output,
         run_metadata={
-            "protocol": "live_web_development",
+            "protocol": "adaptive_live_web_development_v1",
             "model": model,
             "judge": args.judge,
             "judge_model": judge_model if args.judge == "openai" else None,
             "max_tool_calls": budget.max_tool_calls,
             "max_output_tokens": budget.max_output_tokens,
+            "max_research_steps": budget.max_research_steps,
+            "max_parallel_workers": budget.max_parallel_workers,
+            "max_context_chars": budget.max_context_chars,
             "min_sources": args.min_sources,
         },
     )
@@ -172,6 +181,9 @@ def _build_parser() -> argparse.ArgumentParser:
     run.add_argument("--limit", type=int, default=10)
     run.add_argument("--max-tool-calls", type=int, default=8)
     run.add_argument("--max-output-tokens", type=int, default=20_000)
+    run.add_argument("--max-research-steps", type=int, default=4)
+    run.add_argument("--max-parallel-workers", type=int, default=2)
+    run.add_argument("--max-context-chars", type=int, default=8_000)
     run.add_argument("--min-sources", type=int, default=2)
     return parser
 

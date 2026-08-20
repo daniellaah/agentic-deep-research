@@ -73,19 +73,28 @@ def test_run_research_returns_grounded_report_and_execution_metadata() -> None:
     )
     assert result.sources == (source,)
     assert result.citations == (citation,)
-    assert result.evidence == (Evidence(claim="Reliable agents need evaluation.", source=source),)
-    assert result.trace == (step,)
+    assert result.evidence == (
+        Evidence(
+            claim="Reliable agents need evaluation.",
+            source=source,
+            question_id="r1q1",
+            excerpt="Reliable agents need evaluation.",
+        ),
+    )
+    assert step in result.trace
+    assert any(item.action == "plan_created" for item in result.trace)
     assert result.status == "completed"
     assert result.stop_reason == "completed"
     assert result.usage == usage
 
     assert len(runner.calls) == 1
     instructions, task, budget = runner.calls[0]
-    assert "web research agent" in instructions
-    assert "inline citations" in instructions
+    assert "web research worker" in instructions
+    assert "cite every factual claim" in instructions
     assert "Reliable research agents" in task
     assert "English" in task
-    assert budget == request.budget
+    assert budget.max_tool_calls <= request.budget.max_tool_calls
+    assert budget.max_output_tokens == request.budget.max_output_tokens
 
 
 def test_run_research_requires_enough_sources_before_marking_success() -> None:

@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 from .models import ResearchBudget, ResearchRequest
+from .planning import OpenAIAdaptivePlanner
 from .runner import OpenAIAgentRunner
 from .workflow import run_research
 
@@ -27,10 +28,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         budget=ResearchBudget(
             max_tool_calls=args.max_tool_calls,
             max_output_tokens=args.max_output_tokens,
+            max_research_steps=args.max_research_steps,
+            max_parallel_workers=args.max_parallel_workers,
+            max_context_chars=args.max_context_chars,
         ),
     )
-    runner = OpenAIAgentRunner(client=OpenAI(), model=model)
-    result = run_research(request, runner=runner)
+    client = OpenAI()
+    runner = OpenAIAgentRunner(client=client, model=model)
+    planner = OpenAIAdaptivePlanner(client=client, model=model)
+    result = run_research(request, runner=runner, planner=planner)
 
     print(result.report)
     if result.sources:
@@ -39,6 +45,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             print(f"{index}. {source.title}: {source.url}")
 
     if args.show_trace and result.trace:
+        if result.plan is not None:
+            print("\nResearch plan")
+            for question in result.plan.questions:
+                print(f"{question.id}. {question.question}")
         print("\nResearch trace")
         for index, step in enumerate(result.trace, start=1):
             print(f"{index}. {step.action}: {step.detail}")
@@ -46,7 +56,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     print(
         "\nRun summary: "
         f"status={result.status}, stop_reason={result.stop_reason}, "
-        f"tool_calls={len(result.trace)}, total_tokens={result.usage.total_tokens}"
+        f"tool_calls={sum(step.kind == 'tool' for step in result.trace)}, "
+        f"research_steps={len(result.findings)}, total_tokens={result.usage.total_tokens}"
     )
 
 
@@ -64,6 +75,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--max-tool-calls", type=int, default=8)
     parser.add_argument("--max-output-tokens", type=int, default=20_000)
+    parser.add_argument("--max-research-steps", type=int, default=4)
+    parser.add_argument("--max-parallel-workers", type=int, default=2)
+    parser.add_argument("--max-context-chars", type=int, default=8_000)
     parser.add_argument(
         "--show-trace",
         action="store_true",

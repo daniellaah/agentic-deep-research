@@ -4,6 +4,7 @@ This document records reproducible development baselines without publishing benc
 
 ## Protocol
 
+- Architecture: pre-adaptive single Responses API research call at commit `f452a68`
 - Evaluation date: 2026-08-19
 - Agent model: `gpt-5-nano`
 - Judge model: `gpt-5-nano` with Structured Outputs

@@ -112,3 +112,52 @@ def test_run_exposes_the_provider_stop_reason() -> None:
     assert result.report == "Partial report."
     assert result.status == "incomplete"
     assert result.stop_reason == "max_tool_calls"
+
+
+def test_run_parses_explicitly_reported_source_conflicts() -> None:
+    client = Mock()
+    report = "CONFLICT: Studies report opposite effects. [1] [2]"
+    first_start = report.index("[1]")
+    second_start = report.index("[2]")
+    annotations = [
+        SimpleNamespace(
+            type="url_citation",
+            title="Study one",
+            url="https://example.com/one",
+            start_index=first_start,
+            end_index=first_start + 3,
+        ),
+        SimpleNamespace(
+            type="url_citation",
+            title="Study two",
+            url="https://example.com/two",
+            start_index=second_start,
+            end_index=second_start + 3,
+        ),
+    ]
+    client.responses.create.return_value = SimpleNamespace(
+        output_text=report,
+        output=[
+            SimpleNamespace(
+                type="message",
+                content=[SimpleNamespace(type="output_text", annotations=annotations)],
+            )
+        ],
+        status="completed",
+        incomplete_details=None,
+        usage=None,
+    )
+    runner = OpenAIAgentRunner(client=client, model="test-model")
+
+    result = runner.run(
+        instructions="Research carefully.",
+        task="Compare the studies.",
+        budget=ResearchBudget(max_tool_calls=2, max_output_tokens=1_000),
+    )
+
+    assert len(result.conflicts) == 1
+    assert result.conflicts[0].description == "Studies report opposite effects."
+    assert [source.url for source in result.conflicts[0].sources] == [
+        "https://example.com/one",
+        "https://example.com/two",
+    ]

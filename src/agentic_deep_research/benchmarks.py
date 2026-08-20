@@ -217,7 +217,7 @@ def _evaluate_case(
         "stop_reason": result.stop_reason,
         "judge_status": judge_status,
         "judge_error": judge_error,
-        "tool_calls": len(result.trace),
+        "tool_calls": sum(step.kind == "tool" for step in result.trace),
         "source_count": len(result.sources),
         "total_tokens": result.usage.total_tokens,
         "elapsed_seconds": perf_counter() - started_at,

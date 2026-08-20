@@ -9,12 +9,21 @@ class ResearchBudget:
 
     max_tool_calls: int = 8
     max_output_tokens: int = 20_000
+    max_research_steps: int = 4
+    max_parallel_workers: int = 2
+    max_context_chars: int = 8_000
 
     def __post_init__(self) -> None:
         if self.max_tool_calls < 1:
             raise ValueError("max_tool_calls must be at least 1")
         if self.max_output_tokens < 1:
             raise ValueError("max_output_tokens must be at least 1")
+        if self.max_research_steps < 1:
+            raise ValueError("max_research_steps must be at least 1")
+        if self.max_parallel_workers < 1:
+            raise ValueError("max_parallel_workers must be at least 1")
+        if self.max_context_chars < 1:
+            raise ValueError("max_context_chars must be at least 1")
 
 
 @dataclass(frozen=True)
@@ -42,6 +51,26 @@ class Source:
 
     title: str
     url: str
+    quality: str = "unknown"
+
+
+@dataclass(frozen=True)
+class ResearchQuestion:
+    """One independently researchable question in an adaptive plan."""
+
+    id: str
+    question: str
+    rationale: str = ""
+    priority: int = 1
+
+
+@dataclass(frozen=True)
+class ResearchPlan:
+    """An explicit, inspectable plan for answering a research request."""
+
+    objective: str
+    questions: tuple[ResearchQuestion, ...]
+    revision: int = 0
 
 
 @dataclass(frozen=True)
@@ -59,6 +88,18 @@ class Evidence:
 
     claim: str
     source: Source
+    question_id: str = ""
+    excerpt: str = ""
+    confidence: str = "medium"
+
+
+@dataclass(frozen=True)
+class EvidenceConflict:
+    """A disagreement that must remain visible in the final research state."""
+
+    question_id: str
+    description: str
+    sources: tuple[Source, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -67,6 +108,7 @@ class ResearchStep:
 
     action: str
     detail: str
+    kind: str = "tool"
 
 
 @dataclass(frozen=True)
@@ -89,6 +131,42 @@ class AgentRun:
     status: str = "completed"
     stop_reason: str = "completed"
     usage: TokenUsage = field(default_factory=TokenUsage)
+    conflicts: tuple[EvidenceConflict, ...] = ()
+
+
+@dataclass(frozen=True)
+class PlanningRun:
+    """A planner response plus provider execution metadata."""
+
+    plan: ResearchPlan
+    status: str = "completed"
+    stop_reason: str = "completed"
+    usage: TokenUsage = field(default_factory=TokenUsage)
+
+
+@dataclass(frozen=True)
+class ResearchFinding:
+    """The isolated output produced for one planned research question."""
+
+    question_id: str
+    question: str
+    answer: str
+    sources: tuple[Source, ...] = ()
+    citations: tuple[Citation, ...] = ()
+    evidence: tuple[Evidence, ...] = ()
+    status: str = "completed"
+    stop_reason: str = "completed"
+    conflicts: tuple[EvidenceConflict, ...] = ()
+
+
+@dataclass(frozen=True)
+class ResearchArtifact:
+    """A full research product kept outside the model's working context."""
+
+    id: str
+    kind: str
+    content: str
+    question_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -105,3 +183,7 @@ class ResearchResult:
     status: str
     stop_reason: str
     usage: TokenUsage
+    plan: ResearchPlan | None = None
+    findings: tuple[ResearchFinding, ...] = ()
+    conflicts: tuple[EvidenceConflict, ...] = ()
+    artifacts: tuple[ResearchArtifact, ...] = ()

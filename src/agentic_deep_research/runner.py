@@ -1,5 +1,6 @@
 """Agent execution through the OpenAI Responses API."""
 
+import re
 from collections.abc import Mapping
 from typing import Any, Protocol
 
@@ -8,6 +9,7 @@ from openai import OpenAI
 from .models import (
     AgentRun,
     Citation,
+    EvidenceConflict,
     ResearchBudget,
     ResearchStep,
     Source,
@@ -107,6 +109,7 @@ class OpenAIAgentRunner:
                 output_tokens=_value(raw_usage, "output_tokens", 0),
                 total_tokens=_value(raw_usage, "total_tokens", 0),
             ),
+            conflicts=_parse_conflicts(response.output_text, tuple(citations)),
         )
 
 
@@ -154,3 +157,36 @@ def _action_detail(action: object) -> str:
         pattern = _value(action, "pattern", "")
         return f"{url} :: {pattern}".strip(" :")
     return action_type
+
+
+def _parse_conflicts(
+    report: str,
+    citations: tuple[Citation, ...],
+) -> tuple[EvidenceConflict, ...]:
+    conflicts: list[EvidenceConflict] = []
+    for match in re.finditer(r"(?m)^\s*CONFLICT:\s*(.+)$", report):
+        description_start, line_end = match.span(1)
+        line_citations = tuple(
+            citation
+            for citation in citations
+            if description_start <= citation.start_index < citation.end_index <= line_end
+        )
+        description = report[description_start:line_end]
+        for citation in sorted(
+            line_citations,
+            key=lambda item: item.start_index,
+            reverse=True,
+        ):
+            start = citation.start_index - description_start
+            end = citation.end_index - description_start
+            description = description[:start] + description[end:]
+        description = " ".join(description.split()).strip()
+        if description:
+            conflicts.append(
+                EvidenceConflict(
+                    question_id="",
+                    description=description,
+                    sources=tuple(dict.fromkeys(item.source for item in line_citations)),
+                )
+            )
+    return tuple(conflicts)
