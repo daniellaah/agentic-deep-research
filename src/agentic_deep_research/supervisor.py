@@ -7,6 +7,8 @@ from .context import ContextBuilder
 from .evidence import EvidenceStore
 from .models import (
     AgentRun,
+    BudgetSnapshot,
+    ContextPack,
     Evidence,
     EvidenceConflict,
     EvidenceLedger,
@@ -20,6 +22,7 @@ from .models import (
     TokenUsage,
 )
 from .planning import ResearchPlanner
+from .policy import ResearchDecision, SufficiencyPolicy
 from .runner import AgentRunner
 from .worker import IndependentResearchWorker, ResearchWorker
 
@@ -59,26 +62,53 @@ class ResearchSupervisor:
     def __init__(self, *, planner: ResearchPlanner, runner: AgentRunner) -> None:
         self._planner = planner
         self._worker: ResearchWorker = IndependentResearchWorker(runner)
+        self._policy = SufficiencyPolicy()
 
-    def run(self, request: ResearchRequest) -> SupervisorResult:
+    def run(
+        self,
+        request: ResearchRequest,
+        *,
+        initial_ledger: EvidenceLedger | None = None,
+        initial_completed_question_ids: frozenset[str] | None = None,
+        initial_max_questions: int | None = None,
+    ) -> SupervisorResult:
         """Execute planned questions without exceeding global harness limits."""
+        if initial_max_questions is not None and initial_max_questions < 1:
+            raise ValueError("initial_max_questions must be at least 1")
+        evidence_store = EvidenceStore(initial_ledger)
+        context_builder = ContextBuilder(request.budget.max_context_chars)
+        initial_budget = _budget_snapshot(
+            request.budget,
+            runs=0,
+            tool_calls=request.budget.max_tool_calls,
+        )
+        initial_context = context_builder.build(
+            purpose="planner",
+            ledger=evidence_store.snapshot(),
+            budget=initial_budget,
+        )
         planning_runs = [
             self._planner.plan(
                 request=request,
-                context="",
+                context=initial_context.text,
                 completed_questions=(),
-                max_questions=max(1, request.budget.max_research_steps - 1),
+                max_questions=min(
+                    request.budget.max_research_steps,
+                    initial_max_questions
+                    if initial_max_questions is not None
+                    else max(1, request.budget.max_research_steps - 1),
+                ),
                 revision=0,
             )
         ]
         initial_plan = planning_runs[0].plan
-        all_questions = list(initial_plan.questions)
         pending = _new_questions((), initial_plan.questions)
+        all_questions = list(pending)
+        round_questions = tuple(pending)
         runs: list[tuple[ResearchQuestion, AgentRun]] = []
-        evidence_store = EvidenceStore()
         artifacts: list[ResearchArtifact] = []
-        context_builder = ContextBuilder(request.budget.max_context_chars)
         trace = [
+            _context_step("planner:initial", initial_context, initial_budget),
             ResearchStep(
                 action="plan_created",
                 detail=(
@@ -89,15 +119,66 @@ class ResearchSupervisor:
         ]
         remaining_tool_calls = request.budget.max_tool_calls
         revision = initial_plan.revision
-        current_round_start = 0
+        round_start_ledger = evidence_store.snapshot()
+        seeded_completed_ids = (
+            initial_completed_question_ids
+            if initial_completed_question_ids is not None
+            else frozenset()
+        )
         stop_reason = "completed"
 
+        if not pending:
+            decision = self._decide(
+                questions=(),
+                runs=runs,
+                seeded_completed_ids=seeded_completed_ids,
+                ledger=evidence_store.snapshot(),
+                round_start_ledger=round_start_ledger,
+                min_sources=request.min_sources,
+                budget=initial_budget,
+                revision=revision,
+                proposed_questions=(),
+            )
+            trace.append(
+                _decision_step(
+                    decision,
+                    phase="replan",
+                    revision=revision,
+                    budget=initial_budget,
+                )
+            )
+            if decision.reason != "sufficient":
+                stop_reason = decision.reason
+
         while pending:
-            if len(runs) >= request.budget.max_research_steps:
-                stop_reason = "max_research_steps"
-                break
-            if remaining_tool_calls < 1:
-                stop_reason = "max_tool_calls"
+            if (
+                len(runs) >= request.budget.max_research_steps
+                or remaining_tool_calls < 1
+            ):
+                exhausted_budget = _budget_snapshot(
+                    request.budget,
+                    runs=len(runs),
+                    tool_calls=remaining_tool_calls,
+                )
+                decision = self._decide(
+                    questions=round_questions,
+                    runs=runs,
+                    seeded_completed_ids=seeded_completed_ids,
+                    ledger=evidence_store.snapshot(),
+                    round_start_ledger=round_start_ledger,
+                    min_sources=request.min_sources,
+                    budget=exhausted_budget,
+                    revision=revision,
+                )
+                trace.append(
+                    _decision_step(
+                        decision,
+                        phase="budget",
+                        revision=revision,
+                        budget=exhausted_budget,
+                    )
+                )
+                stop_reason = decision.reason
                 break
 
             remaining_steps = request.budget.max_research_steps - len(runs)
@@ -117,12 +198,18 @@ class ResearchSupervisor:
                 request.budget,
                 max_tool_calls=worker_tool_limit,
             )
-            contexts = [
+            batch_ledger = evidence_store.snapshot()
+            batch_budget = _budget_snapshot(
+                request.budget,
+                runs=len(runs),
+                tool_calls=remaining_tool_calls,
+            )
+            context_packs = [
                 context_builder.build(
-                    objective=planning_runs[-1].plan.objective,
-                    active_question=question.question,
-                    evidence=evidence_store.evidence,
-                    conflicts=evidence_store.conflicts,
+                    purpose="worker",
+                    ledger=batch_ledger,
+                    budget=batch_budget,
+                    active_question_id=question.id,
                 )
                 for question in batch
             ]
@@ -133,14 +220,8 @@ class ResearchSupervisor:
                     kind="control",
                 )
             )
-            for question, context in zip(batch, contexts, strict=True):
-                trace.append(
-                    ResearchStep(
-                        action="context_built",
-                        detail=f"{question.id}: chars={len(context)}",
-                        kind="control",
-                    )
-                )
+            for question, context_pack in zip(batch, context_packs, strict=True):
+                trace.append(_context_step(question.id, context_pack, batch_budget))
                 trace.append(
                     ResearchStep(
                         action="worker_started",
@@ -151,7 +232,7 @@ class ResearchSupervisor:
             batch_runs = self._run_batch(
                 request=request,
                 questions=batch,
-                contexts=contexts,
+                contexts=[pack.text for pack in context_packs],
                 budget=worker_budget,
             )
             runs.extend(zip(batch, batch_runs, strict=True))
@@ -183,47 +264,93 @@ class ResearchSupervisor:
             if pending:
                 continue
 
-            gaps = [
-                planned_question
-                for planned_question, planned_run in runs[current_round_start:]
-                if planned_run.status != "completed"
-                or not evidence_store.covers(planned_question.id)
-            ]
-            if not gaps:
+            decision_budget = _budget_snapshot(
+                request.budget,
+                runs=len(runs),
+                tool_calls=remaining_tool_calls,
+            )
+            decision = self._decide(
+                questions=round_questions,
+                runs=runs,
+                seeded_completed_ids=seeded_completed_ids,
+                ledger=evidence_store.snapshot(),
+                round_start_ledger=round_start_ledger,
+                min_sources=request.min_sources,
+                budget=decision_budget,
+                revision=revision,
+            )
+            trace.append(
+                _decision_step(
+                    decision,
+                    phase="round",
+                    revision=revision,
+                    budget=decision_budget,
+                )
+            )
+            if decision.reason == "sufficient":
                 break
-            if len(runs) >= request.budget.max_research_steps:
-                stop_reason = "max_research_steps"
-                break
-            if remaining_tool_calls < 1:
-                stop_reason = "max_tool_calls"
+            if decision.reason != "continue":
+                stop_reason = decision.reason
                 break
 
-            revision += 1
+            next_revision = revision + 1
             remaining_steps = request.budget.max_research_steps - len(runs)
+            planning_context = context_builder.build(
+                purpose="planner",
+                ledger=evidence_store.snapshot(),
+                budget=decision_budget,
+            )
+            trace.append(
+                _context_step(
+                    f"planner:revision:{next_revision}",
+                    planning_context,
+                    decision_budget,
+                )
+            )
             planning_run = self._planner.plan(
                 request=request,
-                context=context_builder.build(
-                    objective=planning_runs[-1].plan.objective,
-                    active_question="Identify the highest-value unresolved evidence gaps.",
-                    evidence=evidence_store.evidence,
-                    conflicts=evidence_store.conflicts,
-                ),
+                context=planning_context.text,
                 completed_questions=tuple(
                     planned_question.question
                     for planned_question, _ in runs
-                    if evidence_store.covers(planned_question.id)
+                    if planned_question.id in _completed_question_ids(
+                        runs,
+                        seeded_completed_ids,
+                    )
+                    and evidence_store.covers(planned_question.id)
                 ),
                 max_questions=remaining_steps,
-                revision=revision,
+                revision=next_revision,
             )
             planning_runs.append(planning_run)
             revised_questions = _new_questions(all_questions, planning_run.plan.questions)
-            if not revised_questions:
-                stop_reason = "no_new_questions"
+            proposed_decision = self._decide(
+                questions=round_questions,
+                runs=runs,
+                seeded_completed_ids=seeded_completed_ids,
+                ledger=evidence_store.snapshot(),
+                round_start_ledger=round_start_ledger,
+                min_sources=request.min_sources,
+                budget=decision_budget,
+                revision=revision,
+                proposed_questions=tuple(revised_questions),
+            )
+            trace.append(
+                _decision_step(
+                    proposed_decision,
+                    phase="replan",
+                    revision=revision,
+                    budget=decision_budget,
+                )
+            )
+            if proposed_decision.reason != "continue":
+                stop_reason = proposed_decision.reason
                 break
+            revision = next_revision
             all_questions.extend(revised_questions)
             pending.extend(revised_questions)
-            current_round_start = len(runs)
+            round_questions = tuple(revised_questions)
+            round_start_ledger = evidence_store.snapshot()
             trace.append(
                 ResearchStep(
                     action="plan_revised",
@@ -256,13 +383,46 @@ class ResearchSupervisor:
             trace=tuple(trace),
             status=(
                 "incomplete"
-                if stop_reason in {"max_tool_calls", "max_research_steps"}
+                if stop_reason
+                in {
+                    "max_tool_calls",
+                    "max_research_steps",
+                    "no_new_evidence",
+                    "no_new_questions",
+                }
                 else "completed"
             ),
             stop_reason=stop_reason,
             planning_usage=_sum_usage(*(item.usage for item in planning_runs)),
             ledger=evidence_store.snapshot(),
             artifacts=tuple(artifacts),
+        )
+
+    def _decide(
+        self,
+        *,
+        questions: tuple[ResearchQuestion, ...],
+        runs: list[tuple[ResearchQuestion, AgentRun]],
+        seeded_completed_ids: frozenset[str],
+        ledger: EvidenceLedger,
+        round_start_ledger: EvidenceLedger,
+        min_sources: int,
+        budget: BudgetSnapshot,
+        revision: int,
+        proposed_questions: tuple[ResearchQuestion, ...] | None = None,
+    ) -> ResearchDecision:
+        return self._policy.decide(
+            questions=questions,
+            completed_question_ids=_completed_question_ids(
+                runs,
+                seeded_completed_ids,
+            ),
+            ledger=ledger,
+            round_start_ledger=round_start_ledger,
+            min_sources=min_sources,
+            budget=budget,
+            revision=revision,
+            proposed_questions=proposed_questions,
         )
 
     def _run_batch(
@@ -308,6 +468,72 @@ def _new_questions(
             result.append(candidate)
             seen.add(key)
     return result
+
+
+def _budget_snapshot(
+    budget: ResearchBudget,
+    *,
+    runs: int,
+    tool_calls: int,
+) -> BudgetSnapshot:
+    return BudgetSnapshot(
+        tool_calls_remaining=max(0, tool_calls),
+        research_steps_remaining=max(0, budget.max_research_steps - runs),
+    )
+
+
+def _completed_question_ids(
+    runs: list[tuple[ResearchQuestion, AgentRun]],
+    seeded_completed_ids: frozenset[str],
+) -> frozenset[str]:
+    return seeded_completed_ids.union(
+        question.id
+        for question, run in runs
+        if run.status == "completed"
+    )
+
+
+def _context_step(
+    target: str,
+    pack: ContextPack,
+    budget: BudgetSnapshot,
+) -> ResearchStep:
+    selected = "|".join(pack.selected_evidence_ids) or "-"
+    return ResearchStep(
+        action="context_built",
+        detail=(
+            f"target={target}, purpose={pack.purpose}, used_chars={pack.used_chars}, "
+            f"selected_evidence_ids={selected}, "
+            f"omitted_evidence_count={pack.omitted_evidence_count}, "
+            f"included_conflict_count={pack.included_conflict_count}, "
+            f"omitted_conflict_count={pack.omitted_conflict_count}, "
+            f"tool_calls_remaining={budget.tool_calls_remaining}, "
+            f"research_steps_remaining={budget.research_steps_remaining}"
+        ),
+        kind="control",
+    )
+
+
+def _decision_step(
+    decision: ResearchDecision,
+    *,
+    phase: str,
+    revision: int,
+    budget: BudgetSnapshot,
+) -> ResearchStep:
+    uncovered = "|".join(decision.uncovered_question_ids) or "-"
+    return ResearchStep(
+        action="supervisor_decision",
+        detail=(
+            f"phase={phase}, revision={revision}, reason={decision.reason}, "
+            f"uncovered_question_ids={uncovered}, "
+            f"additional_sources_needed={decision.additional_sources_needed}, "
+            f"new_evidence_count={decision.new_evidence_count}, "
+            f"tool_calls_remaining={budget.tool_calls_remaining}, "
+            f"research_steps_remaining={budget.research_steps_remaining}"
+        ),
+        kind="control",
+    )
 
 
 def _sum_usage(*items: TokenUsage) -> TokenUsage:

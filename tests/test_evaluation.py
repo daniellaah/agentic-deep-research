@@ -118,7 +118,7 @@ def _manifest(
         judge_model="judge-model",
         budget=ResearchBudget(max_tool_calls=3, max_research_steps=2),
         retry_policy=RetryPolicy(max_attempts=2, jitter_ratio=0),
-        search_protocol="verified-adaptive-live-web-v2",
+        search_protocol="verified-adaptive-live-web-v3",
         grader_version="test-grader-v1",
     )
 

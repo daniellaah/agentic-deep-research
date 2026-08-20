@@ -477,7 +477,7 @@ def _engine_fingerprint(
     retry_policy: RetryPolicy,
 ) -> str:
     payload = {
-        "workflow_version": 2,
+        "workflow_version": 3,
         "runner": _component_fingerprint(runner),
         "planner": None if planner is None else _component_fingerprint(planner),
         "report_agent": (

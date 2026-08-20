@@ -28,7 +28,7 @@ _TRACKING_QUERY_PARAMETERS = {
 class EvidenceStore:
     """Build a canonical evidence ledger from independently produced runs."""
 
-    def __init__(self) -> None:
+    def __init__(self, initial_ledger: EvidenceLedger | None = None) -> None:
         self._sources: dict[str, Source] = {}
         self._evidence: list[Evidence] = []
         self._evidence_ids_by_key: dict[tuple[str, str, str], str] = {}
@@ -37,6 +37,8 @@ class EvidenceStore:
             tuple[str, str, tuple[str, ...]],
             EvidenceConflict,
         ] = {}
+        if initial_ledger is not None:
+            self._seed(initial_ledger)
 
     @property
     def sources(self) -> tuple[Source, ...]:
@@ -128,6 +130,27 @@ class EvidenceStore:
     def add_run(self, question_id: str, run: AgentRun) -> None:
         """Compatibility wrapper for callers that do not need a packet."""
         self.ingest_run(question_id, run)
+
+    def _seed(self, ledger: EvidenceLedger) -> None:
+        """Restore normalized research material without resetting its provenance."""
+        for source in ledger.sources:
+            self._add_source(source)
+        for item in ledger.evidence:
+            source = self._add_source(item.source)
+            claim = item.claim.strip()
+            if not claim or not source.id:
+                continue
+            self._add_evidence(
+                replace(
+                    item,
+                    claim=claim,
+                    source=source,
+                    id=item.id or _evidence_id(item.question_id, claim, source.id),
+                )
+            )
+        for conflict in ledger.conflicts:
+            self._add_conflict(conflict.question_id, conflict)
+        self._update_corroboration()
 
     def get(self, evidence_id: str) -> Evidence | None:
         """Return one evidence record by its stable identifier."""

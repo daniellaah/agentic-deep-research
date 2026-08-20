@@ -179,6 +179,25 @@ class GapRevisionAgent(WriterOnlyAgent):
         )
 
 
+class MultipleGapRevisionAgent(GapRevisionAgent):
+    def critique(self, **_: object) -> ReportCritique:
+        self.critique_calls += 1
+        if self.critique_calls == 1:
+            return ReportCritique(
+                coverage_gaps=(
+                    "Find a reliability benchmark.",
+                    "Find an observability example.",
+                ),
+                needs_more_research=True,
+            )
+        return ReportCritique()
+
+    def revise(self, **_: object) -> ReportDraft:
+        return ReportDraft(
+            report="# Reliable agents\n\nEvaluation improves reliability [E1]."
+        )
+
+
 class PersistentGapAgent(GapRevisionAgent):
     def critique(self, **_: object) -> ReportCritique:
         self.critique_calls += 1
@@ -228,6 +247,17 @@ def _gap_run() -> AgentRun:
         sources=(source,),
         citations=(Citation(source, start, start + 3),),
         usage=TokenUsage(total_tokens=15),
+    )
+
+
+def _observability_run() -> AgentRun:
+    source = Source("Observability case study", "https://example.com/observability")
+    report = "Tracing reveals reliability failures. [1]"
+    start = report.index("[1]")
+    return AgentRun(
+        report=report,
+        sources=(source,),
+        citations=(Citation(source, start, start + 3),),
     )
 
 
@@ -311,7 +341,7 @@ def test_writer_can_cite_evidence_ledger_markers() -> None:
 
 def test_unbound_legacy_source_marker_requires_review() -> None:
     result = run_research(
-        ResearchRequest(topic="Reliable agents", min_sources=2),
+        ResearchRequest(topic="Reliable agents", min_sources=1),
         runner=SingleRunRunner(_run_with_an_unbound_first_source()),
         report_agent=UnboundLegacySourceAgent(),
     )
@@ -485,6 +515,39 @@ def test_gap_search_adds_evidence_and_reviser_completes_the_report() -> None:
     assert any(step.action == "gap_search_started" for step in result.trace)
     assert any(step.action == "report_revised" for step in result.trace)
     assert agent.critique_calls == 2
+
+
+def test_gap_search_does_not_drop_questions_to_reserve_a_replan_step() -> None:
+    agent = MultipleGapRevisionAgent()
+    runner = MappingRunner(
+        {
+            "Reliable agents": _cited_run(),
+            "Find a reliability benchmark.": _gap_run(),
+            "Find an observability example.": _observability_run(),
+        }
+    )
+
+    result = run_research(
+        ResearchRequest(
+            topic="Reliable agents",
+            min_sources=1,
+            budget=ResearchBudget(
+                max_tool_calls=6,
+                max_research_steps=3,
+                max_parallel_workers=1,
+                max_revision_rounds=1,
+            ),
+        ),
+        runner=runner,
+        report_agent=agent,
+    )
+
+    assert [finding.question for finding in result.findings] == [
+        "Reliable agents",
+        "Find a reliability benchmark.",
+        "Find an observability example.",
+    ]
+    assert result.status == "completed"
 
 
 def test_revision_loop_stops_at_the_configured_maximum() -> None:

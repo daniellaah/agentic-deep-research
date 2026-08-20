@@ -188,6 +188,27 @@ def test_supervisor_returns_one_ledger_snapshot_with_compatibility_views() -> No
     assert supervision.artifacts[0].id == "finding:q1"
 
 
+def test_supervisor_marks_an_empty_initial_plan_incomplete() -> None:
+    planner = FakePlanner([PlanningRun(plan=ResearchPlan("No plan", ()))])
+    runner = FakeRunner({})
+
+    result = run_research(
+        ResearchRequest(topic="Unplanned topic", min_sources=1),
+        runner=runner,
+        planner=planner,
+    )
+
+    assert runner.tasks == []
+    assert result.status == "incomplete"
+    assert result.stop_reason == "no_new_questions"
+    assert any(
+        step.action == "supervisor_decision"
+        and "phase=replan" in step.detail
+        and "reason=no_new_questions" in step.detail
+        for step in result.trace
+    )
+
+
 def test_supervisor_replans_when_a_question_produces_no_evidence() -> None:
     initial_question = ResearchQuestion(
         id="r1q1",
@@ -234,6 +255,136 @@ def test_supervisor_replans_when_a_question_produces_no_evidence() -> None:
     assert result.status == "completed"
     assert any(step.action == "plan_revised" for step in result.trace)
     assert len(planner.calls) == 2
+
+
+def test_supervisor_replans_until_global_source_minimum_is_met() -> None:
+    initial_question = ResearchQuestion(id="r1q1", question="Establish the claim")
+    revised_question = ResearchQuestion(id="r2q1", question="Corroborate the claim")
+    planner = FakePlanner(
+        [
+            PlanningRun(plan=ResearchPlan("Corroborate", (initial_question,))),
+            PlanningRun(
+                plan=ResearchPlan("Corroborate", (revised_question,), revision=1)
+            ),
+        ]
+    )
+    runner = FakeRunner(
+        {
+            initial_question.question: _cited_run(
+                initial_question.question,
+                "One evaluation supports the claim.",
+                "first-source",
+            ),
+            revised_question.question: _cited_run(
+                revised_question.question,
+                "An independent evaluation corroborates the claim.",
+                "second-source",
+            ),
+        }
+    )
+
+    result = run_research(
+        ResearchRequest(
+            topic="Corroborated claim",
+            min_sources=2,
+            budget=ResearchBudget(
+                max_tool_calls=2,
+                max_research_steps=2,
+                max_parallel_workers=1,
+            ),
+        ),
+        runner=runner,
+        planner=planner,
+    )
+
+    decisions = [
+        step.detail for step in result.trace if step.action == "supervisor_decision"
+    ]
+    assert len(result.sources) == 2
+    assert result.status == "completed"
+    assert any("reason=continue" in detail for detail in decisions)
+    assert "reason=sufficient" in decisions[-1]
+
+
+def test_supervisor_marks_zero_yield_revised_round_incomplete() -> None:
+    initial_question = ResearchQuestion(id="r1q1", question="Search the first route")
+    revised_question = ResearchQuestion(id="r2q1", question="Search another route")
+    planner = FakePlanner(
+        [
+            PlanningRun(plan=ResearchPlan("Find evidence", (initial_question,))),
+            PlanningRun(
+                plan=ResearchPlan("Find evidence", (revised_question,), revision=1)
+            ),
+        ]
+    )
+    runner = FakeRunner(
+        {
+            initial_question.question: AgentRun(report="No evidence found."),
+            revised_question.question: AgentRun(report="Still no evidence found."),
+        }
+    )
+
+    result = run_research(
+        ResearchRequest(
+            topic="Hard-to-find evidence",
+            min_sources=1,
+            budget=ResearchBudget(
+                max_tool_calls=3,
+                max_research_steps=3,
+                max_parallel_workers=1,
+            ),
+        ),
+        runner=runner,
+        planner=planner,
+    )
+
+    assert result.status == "incomplete"
+    assert result.stop_reason == "no_new_evidence"
+    assert any(
+        step.action == "supervisor_decision" and "reason=no_new_evidence" in step.detail
+        for step in result.trace
+    )
+
+
+def test_supervisor_marks_duplicate_replan_incomplete() -> None:
+    question = ResearchQuestion(id="r1q1", question="Find one source")
+    duplicate = ResearchQuestion(id="r2q1", question="  find ONE source  ")
+    planner = FakePlanner(
+        [
+            PlanningRun(plan=ResearchPlan("Find sources", (question,))),
+            PlanningRun(plan=ResearchPlan("Find sources", (duplicate,), revision=1)),
+        ]
+    )
+    runner = FakeRunner(
+        {
+            question.question: _cited_run(
+                question.question,
+                "One source supports the result.",
+                "only-source",
+            )
+        }
+    )
+
+    result = run_research(
+        ResearchRequest(
+            topic="Find multiple sources",
+            min_sources=2,
+            budget=ResearchBudget(
+                max_tool_calls=2,
+                max_research_steps=2,
+                max_parallel_workers=1,
+            ),
+        ),
+        runner=runner,
+        planner=planner,
+    )
+
+    assert result.status == "incomplete"
+    assert result.stop_reason == "no_new_questions"
+    assert any(
+        step.action == "supervisor_decision" and "reason=no_new_questions" in step.detail
+        for step in result.trace
+    )
 
 
 def test_supervisor_stops_before_exceeding_the_global_tool_budget() -> None:
@@ -307,6 +458,15 @@ def test_supervisor_runs_independent_workers_with_bounded_parallelism() -> None:
     assert [finding.question_id for finding in result.findings] == ["q1", "q2", "q3"]
     batches = [step.detail for step in result.trace if step.action == "worker_batch_started"]
     assert batches == ["workers=2", "workers=1"]
+    first_batch_contexts = [
+        step.detail
+        for step in result.trace
+        if step.action == "context_built"
+        and ("target=q1," in step.detail or "target=q2," in step.detail)
+    ]
+    assert len(first_batch_contexts) == 2
+    assert all("tool_calls_remaining=3" in detail for detail in first_batch_contexts)
+    assert all("research_steps_remaining=3" in detail for detail in first_batch_contexts)
     assert result.status == "completed"
 
 
@@ -420,8 +580,14 @@ def test_context_engineering_passes_bounded_evidence_and_preserves_full_artifact
     second_task = next(task for task in runner.tasks if questions[1].question in task)
     context = second_task.split("Prior evidence:\n", 1)[1].split("\n\nWrite", 1)[0]
     assert len(context) <= 180
-    assert "citation-linked evidence" in context.casefold()
+    assert '"kind":"context"' in context
+    assert '"purpose":"worker"' in context
     assert long_claim not in context
     assert [artifact.question_id for artifact in result.artifacts] == ["q1", "q2"]
     assert result.artifacts[0].content == f"{long_claim} [1]"
-    assert any(step.action == "context_built" for step in result.trace)
+    assert any(
+        step.action == "context_built"
+        and "target=q2," in step.detail
+        and "omitted_evidence_count=1" in step.detail
+        for step in result.trace
+    )
