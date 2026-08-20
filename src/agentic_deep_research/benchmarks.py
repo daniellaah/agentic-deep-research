@@ -168,7 +168,7 @@ def _evaluate_case(
     started_at = perf_counter()
     try:
         result = research(case.question)
-    except (OpenAIError, RuntimeError, ValueError) as error:
+    except (OpenAIError, RuntimeError, TypeError, ValueError) as error:
         return {
             "benchmark": benchmark,
             "case_id": case.id,
@@ -183,9 +183,11 @@ def _evaluate_case(
             "tool_calls": 0,
             "source_count": 0,
             "total_tokens": 0,
+            "revision_count": 0,
             "elapsed_seconds": perf_counter() - started_at,
             "sources": [],
             "evidence": [],
+            "citation_checks": [],
             "trace": [],
             "metadata": case.metadata,
             "run_metadata": run_metadata,
@@ -202,7 +204,7 @@ def _evaluate_case(
                 prediction=result.raw_report,
             )
             judge_status = "completed"
-        except (OpenAIError, RuntimeError, ValueError) as error:
+        except (OpenAIError, RuntimeError, TypeError, ValueError) as error:
             judge_status = "error"
             judge_error = type(error).__name__
 
@@ -220,9 +222,11 @@ def _evaluate_case(
         "tool_calls": sum(step.kind == "tool" for step in result.trace),
         "source_count": len(result.sources),
         "total_tokens": result.usage.total_tokens,
+        "revision_count": result.revision_count,
         "elapsed_seconds": perf_counter() - started_at,
         "sources": [asdict(source) for source in result.sources],
         "evidence": [asdict(item) for item in result.evidence],
+        "citation_checks": [asdict(item) for item in result.citation_checks],
         "trace": [asdict(step) for step in result.trace],
         "metadata": case.metadata,
         "run_metadata": run_metadata,

@@ -12,6 +12,8 @@ class ResearchBudget:
     max_research_steps: int = 4
     max_parallel_workers: int = 2
     max_context_chars: int = 8_000
+    max_verification_tool_calls: int = 2
+    max_revision_rounds: int = 2
 
     def __post_init__(self) -> None:
         if self.max_tool_calls < 1:
@@ -24,6 +26,10 @@ class ResearchBudget:
             raise ValueError("max_parallel_workers must be at least 1")
         if self.max_context_chars < 1:
             raise ValueError("max_context_chars must be at least 1")
+        if self.max_verification_tool_calls < 0:
+            raise ValueError("max_verification_tool_calls must not be negative")
+        if self.max_revision_rounds < 0:
+            raise ValueError("max_revision_rounds must not be negative")
 
 
 @dataclass(frozen=True)
@@ -80,6 +86,27 @@ class Citation:
     source: Source
     start_index: int
     end_index: int
+
+
+@dataclass(frozen=True)
+class CitationClaim:
+    """A final-report claim paired with its controlled source."""
+
+    claim: str
+    source: Source
+    marker: str
+    claim_id: str = ""
+
+
+@dataclass(frozen=True)
+class CitationCheck:
+    """Semantic support judgment for one claim-source pair."""
+
+    claim: str
+    source: Source
+    status: str
+    reason: str
+    claim_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -145,6 +172,36 @@ class PlanningRun:
 
 
 @dataclass(frozen=True)
+class ReportDraft:
+    """A synthesized report that cites controlled source markers."""
+
+    report: str
+    usage: TokenUsage = field(default_factory=TokenUsage)
+
+
+@dataclass(frozen=True)
+class ReportCritique:
+    """Structured quality feedback about a synthesized report."""
+
+    coverage_gaps: tuple[str, ...] = ()
+    unsupported_claims: tuple[str, ...] = ()
+    contradictions: tuple[str, ...] = ()
+    clarity_issues: tuple[str, ...] = ()
+    revision_instructions: tuple[str, ...] = ()
+    needs_more_research: bool = False
+    usage: TokenUsage = field(default_factory=TokenUsage)
+
+
+@dataclass(frozen=True)
+class CitationVerification:
+    """All citation judgments and observable verifier execution metadata."""
+
+    checks: tuple[CitationCheck, ...] = ()
+    trace: tuple[ResearchStep, ...] = ()
+    usage: TokenUsage = field(default_factory=TokenUsage)
+
+
+@dataclass(frozen=True)
 class ResearchFinding:
     """The isolated output produced for one planned research question."""
 
@@ -187,3 +244,6 @@ class ResearchResult:
     findings: tuple[ResearchFinding, ...] = ()
     conflicts: tuple[EvidenceConflict, ...] = ()
     artifacts: tuple[ResearchArtifact, ...] = ()
+    critique: ReportCritique | None = None
+    citation_checks: tuple[CitationCheck, ...] = ()
+    revision_count: int = 0

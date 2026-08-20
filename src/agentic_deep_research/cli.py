@@ -9,6 +9,7 @@ from openai import OpenAI
 
 from .models import ResearchBudget, ResearchRequest
 from .planning import OpenAIAdaptivePlanner
+from .reporting import OpenAIReportAgent
 from .runner import OpenAIAgentRunner
 from .workflow import run_research
 
@@ -31,12 +32,20 @@ def main(argv: Sequence[str] | None = None) -> None:
             max_research_steps=args.max_research_steps,
             max_parallel_workers=args.max_parallel_workers,
             max_context_chars=args.max_context_chars,
+            max_verification_tool_calls=args.max_verification_tool_calls,
+            max_revision_rounds=args.max_revision_rounds,
         ),
     )
     client = OpenAI()
     runner = OpenAIAgentRunner(client=client, model=model)
     planner = OpenAIAdaptivePlanner(client=client, model=model)
-    result = run_research(request, runner=runner, planner=planner)
+    report_agent = OpenAIReportAgent(client=client, model=model)
+    result = run_research(
+        request,
+        runner=runner,
+        planner=planner,
+        report_agent=report_agent,
+    )
 
     print(result.report)
     if result.sources:
@@ -57,7 +66,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         "\nRun summary: "
         f"status={result.status}, stop_reason={result.stop_reason}, "
         f"tool_calls={sum(step.kind == 'tool' for step in result.trace)}, "
-        f"research_steps={len(result.findings)}, total_tokens={result.usage.total_tokens}"
+        f"research_steps={len(result.findings)}, revisions={result.revision_count}, "
+        f"citation_checks={len(result.citation_checks)}, "
+        f"total_tokens={result.usage.total_tokens}"
     )
 
 
@@ -78,6 +89,8 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-research-steps", type=int, default=4)
     parser.add_argument("--max-parallel-workers", type=int, default=2)
     parser.add_argument("--max-context-chars", type=int, default=8_000)
+    parser.add_argument("--max-verification-tool-calls", type=int, default=2)
+    parser.add_argument("--max-revision-rounds", type=int, default=2)
     parser.add_argument(
         "--show-trace",
         action="store_true",

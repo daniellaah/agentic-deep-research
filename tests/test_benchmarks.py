@@ -2,7 +2,7 @@ import json
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from agentic_deep_research import ResearchResult, TokenUsage
+from agentic_deep_research import CitationCheck, ResearchResult, Source, TokenUsage
 from agentic_deep_research.benchmarks import (
     BenchmarkCase,
     ExactMatchJudge,
@@ -13,6 +13,7 @@ from agentic_deep_research.benchmarks import (
 
 
 def _result(topic: str, report: str) -> ResearchResult:
+    source = Source("Example", "https://example.com")
     return ResearchResult(
         topic=topic,
         report=report,
@@ -24,6 +25,16 @@ def _result(topic: str, report: str) -> ResearchResult:
         status="completed",
         stop_reason="completed",
         usage=TokenUsage(total_tokens=10),
+        citation_checks=(
+            CitationCheck(
+                claim="A supported claim.",
+                source=source,
+                status="supported",
+                reason="The source supports it.",
+                claim_id="C1",
+            ),
+        ),
+        revision_count=1,
     )
 
 
@@ -63,6 +74,8 @@ def test_run_benchmark_scores_cases_and_resumes_from_jsonl(tmp_path) -> None:
     records = [json.loads(line) for line in output_path.read_text().splitlines()]
     assert [record["case_id"] for record in records] == ["one", "two"]
     assert [record["correct"] for record in records] == [True, False]
+    assert records[0]["revision_count"] == 1
+    assert records[0]["citation_checks"][0]["status"] == "supported"
 
     calls.clear()
     resumed = run_benchmark(
