@@ -8,7 +8,7 @@ class ResearchBudget:
     """Hard limits passed to the model runtime."""
 
     max_tool_calls: int = 8
-    max_output_tokens: int = 4_000
+    max_output_tokens: int = 20_000
 
     def __post_init__(self) -> None:
         if self.max_tool_calls < 1:
@@ -24,12 +24,16 @@ class ResearchRequest:
     topic: str
     language: str = "the same language as the request"
     budget: ResearchBudget = field(default_factory=ResearchBudget)
+    min_sources: int = 2
+    require_citations: bool = True
 
     def __post_init__(self) -> None:
         if not self.topic.strip():
             raise ValueError("research topic must not be empty")
         if not self.language.strip():
             raise ValueError("report language must not be empty")
+        if self.min_sources < 1:
+            raise ValueError("min_sources must be at least 1")
 
 
 @dataclass(frozen=True)
@@ -47,6 +51,14 @@ class Citation:
     source: Source
     start_index: int
     end_index: int
+
+
+@dataclass(frozen=True)
+class Evidence:
+    """A report claim linked to the web source cited for it."""
+
+    claim: str
+    source: Source
 
 
 @dataclass(frozen=True)
@@ -85,8 +97,10 @@ class ResearchResult:
 
     topic: str
     report: str
+    raw_report: str
     sources: tuple[Source, ...]
     citations: tuple[Citation, ...]
+    evidence: tuple[Evidence, ...]
     trace: tuple[ResearchStep, ...]
     status: str
     stop_reason: str

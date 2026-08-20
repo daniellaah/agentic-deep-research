@@ -3,6 +3,7 @@
 from .models import (
     AgentRun,
     Citation,
+    Evidence,
     ResearchBudget,
     ResearchRequest,
     ResearchResult,
@@ -15,6 +16,7 @@ from .workflow import run_research
 __all__ = [
     "AgentRun",
     "Citation",
+    "Evidence",
     "ResearchBudget",
     "ResearchRequest",
     "ResearchResult",

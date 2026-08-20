@@ -11,12 +11,16 @@ dependencies = [
 
 [project.scripts]
 deep-research = "agentic_deep_research.cli:main"
+deep-research-eval = "agentic_deep_research.benchmark_cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
+benchmark = [
+    "datasets>=4,<5",
+]
 dev = [
     "ipykernel>=6.29,<7",
     "jupyterlab>=4.4,<5",

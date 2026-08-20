@@ -63,7 +63,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Language for the final report",
     )
     parser.add_argument("--max-tool-calls", type=int, default=8)
-    parser.add_argument("--max-output-tokens", type=int, default=4_000)
+    parser.add_argument("--max-output-tokens", type=int, default=20_000)
     parser.add_argument(
         "--show-trace",
         action="store_true",
