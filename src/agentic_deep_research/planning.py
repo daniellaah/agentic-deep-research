@@ -1,6 +1,7 @@
 """Planning boundaries for an adaptive research workflow."""
 
 import json
+from dataclasses import asdict
 from typing import Protocol
 
 from openai import OpenAI
@@ -43,13 +44,23 @@ class TopicPlanner:
         revision: int,
     ) -> PlanningRun:
         del context, completed_questions, max_questions
+        research_question = (
+            request.brief.research_question
+            if request.brief is not None
+            else request.topic.strip()
+        )
+        objective = (
+            request.brief.objective
+            if request.brief is not None
+            else request.topic.strip()
+        )
         return PlanningRun(
             plan=ResearchPlan(
-                objective=request.topic.strip(),
+                objective=objective,
                 questions=(
                     ResearchQuestion(
                         id=f"r{revision + 1}q1",
-                        question=request.topic.strip(),
+                        question=research_question,
                         rationale="Directly answer the requested research topic.",
                     ),
                 ),
@@ -82,6 +93,7 @@ class OpenAIAdaptivePlanner:
         revision: int,
     ) -> PlanningRun:
         """Generate only the highest-value questions not already answered."""
+        brief = None if request.brief is None else asdict(request.brief)
         response = self._client.responses.create(
             model=self._model,
             instructions=(
@@ -92,6 +104,7 @@ class OpenAIAdaptivePlanner:
             ),
             input=(
                 f"<research_request>{request.topic.strip()}</research_request>\n"
+                f"<research_brief>{json.dumps(brief, ensure_ascii=False)}</research_brief>\n"
                 f"<report_language>{request.language}</report_language>\n"
                 f"<completed_questions>{json.dumps(completed_questions)}</completed_questions>\n"
                 f"<evidence_context>{context}</evidence_context>"

@@ -1,5 +1,12 @@
 """Public interface for the Agentic Deep Research package."""
 
+from .artifacts import (
+    ExportedArtifact,
+    ExportIntegrityError,
+    export_json,
+    export_markdown,
+    export_result,
+)
 from .benchmarks import BenchmarkCase, ExactMatchJudge, Judgment, OpenAIAnswerJudge
 from .corpus import (
     CorpusDocument,
@@ -17,6 +24,7 @@ from .evaluation import (
     ReplayCaseExecutor,
     TrajectoryMetrics,
 )
+from .events import RunEvent, event_to_dict
 from .models import (
     AgentRun,
     BudgetSnapshot,
@@ -24,15 +32,19 @@ from .models import (
     CitationCheck,
     CitationClaim,
     CitationVerification,
+    ClarificationDecision,
     ContextPack,
     ContextPurpose,
+    ConversationMessage,
     Evidence,
     EvidenceConflict,
     EvidenceLedger,
+    PlanControlRecord,
     PlanningRun,
     ReportCritique,
     ReportDraft,
     ResearchArtifact,
+    ResearchBrief,
     ResearchBudget,
     ResearchFinding,
     ResearchPacket,
@@ -41,6 +53,7 @@ from .models import (
     ResearchRequest,
     ResearchResult,
     ResearchStep,
+    ScopingRun,
     Source,
     TokenUsage,
     VerificationStatus,
@@ -64,6 +77,8 @@ from .runtime import (
     RuntimeOutcome,
     SQLiteCheckpointStore,
 )
+from .scoping import OpenAIResearchScoper, ResearchScoper
+from .service import ResearchService, ServiceLimits
 from .workflow import run_research
 
 __all__ = [
@@ -74,8 +89,10 @@ __all__ = [
     "CitationCheck",
     "CitationClaim",
     "CitationVerification",
+    "ClarificationDecision",
     "ContextPack",
     "ContextPurpose",
+    "ConversationMessage",
     "CorpusDocument",
     "DeterministicReportJudge",
     "DurableCaseExecutor",
@@ -86,6 +103,8 @@ __all__ = [
     "EvidenceConflict",
     "EvidenceLedger",
     "ExactMatchJudge",
+    "ExportIntegrityError",
+    "ExportedArtifact",
     "InMemoryCorpusBackend",
     "JsonCheckpointStore",
     "JsonlCorpusBackend",
@@ -93,6 +112,8 @@ __all__ = [
     "OpenAIAnswerJudge",
     "OpenAIFixedCorpusRunner",
     "OpenAIReportJudge",
+    "OpenAIResearchScoper",
+    "PlanControlRecord",
     "PlanningRun",
     "ReplayCaseExecutor",
     "ReportCritique",
@@ -100,6 +121,7 @@ __all__ = [
     "ReportJudgeError",
     "ReportJudgment",
     "ResearchArtifact",
+    "ResearchBrief",
     "ResearchBudget",
     "ResearchDecision",
     "ResearchFinding",
@@ -109,21 +131,30 @@ __all__ = [
     "ResearchRequest",
     "ResearchResult",
     "ResearchRuntime",
+    "ResearchScoper",
+    "ResearchService",
     "ResearchStep",
     "RetryPolicy",
     "RubricCriterion",
     "RubricScore",
+    "RunEvent",
     "RunState",
     "RuntimeOutcome",
     "SQLiteCheckpointStore",
+    "ScopingRun",
     "SearchBackend",
     "SearchHit",
+    "ServiceLimits",
     "Source",
     "SufficiencyPolicy",
     "TokenUsage",
     "TrajectoryMetrics",
     "VerificationStatus",
     "deterministic_report_grader_id",
+    "event_to_dict",
+    "export_json",
+    "export_markdown",
+    "export_result",
     "openai_report_grader_id",
     "run_research",
 ]

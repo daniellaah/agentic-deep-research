@@ -6,6 +6,7 @@ from agentic_deep_research import (
     CitationClaim,
     Evidence,
     ReportCritique,
+    ResearchBrief,
     ResearchBudget,
     ResearchFinding,
     ResearchRequest,
@@ -66,7 +67,16 @@ def test_openai_report_agent_runs_structured_writer_critic_and_reviser() -> None
         _response('{"report":"A revised report [E1]."}'),
     ]
     source = _source()
-    request = ResearchRequest(topic="Reliable agents", min_sources=1)
+    request = ResearchRequest(
+        topic="Reliable agents",
+        min_sources=1,
+        brief=ResearchBrief(
+            research_question="Which patterns make agents reliable?",
+            objective="Help engineers compare implementation trade-offs.",
+            constraints=("Prefer primary sources",),
+            deliverable="A cited Markdown report.",
+        ),
+    )
     finding = ResearchFinding(
         question_id="q1",
         question="How are agents evaluated?",
@@ -134,6 +144,8 @@ def test_openai_report_agent_runs_structured_writer_critic_and_reviser() -> None
         },
     }
     assert "[S1]" not in writer_input
+    assert '"objective": "Help engineers compare implementation trade-offs."' in writer_input
+    assert '"constraints": ["Prefer primary sources"]' in writer_input
     assert "[E<number>]" in client.responses.create.call_args_list[2].kwargs["instructions"]
 
 
@@ -156,7 +168,14 @@ def test_openai_report_agent_verifies_claims_with_web_search() -> None:
     agent = OpenAIReportAgent(client=client, model="report-model")
 
     result = agent.verify(
-        request=ResearchRequest(topic="Reliable agents", min_sources=1),
+        request=ResearchRequest(
+            topic="Reliable agents",
+            min_sources=1,
+            brief=ResearchBrief(
+                research_question="How are agents evaluated?",
+                objective="Evaluate the approved reliability objective.",
+            ),
+        ),
         claims=(
             CitationClaim(
                 claim="Evaluation improves reliability.",
@@ -178,6 +197,9 @@ def test_openai_report_agent_verifies_claims_with_web_search() -> None:
     assert call["tool_choice"] == "required"
     assert call["max_tool_calls"] == 2
     verifier_input = json.loads(call["input"])
+    assert verifier_input["research_brief"]["objective"] == (
+        "Evaluate the approved reliability objective."
+    )
     assert verifier_input["claims"][0]["evidence_id"] == "E1"
     assert verifier_input["claims"][0]["source_id"] == "S1"
     assert verifier_input["claims"][0]["source_url"] == (

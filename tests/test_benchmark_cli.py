@@ -180,7 +180,7 @@ def test_replay_cli_uses_checkpoint_without_constructing_openai(
         judge_model="deterministic",
         budget=ResearchBudget(),
         retry_policy=RetryPolicy(),
-        search_protocol="verified-adaptive-live-web-v3",
+        search_protocol="verified-adaptive-live-web-v4",
         grader_version="exact-match-v1",
     )
     create_or_validate_manifest(experiment / "manifest.json", manifest)
