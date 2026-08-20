@@ -27,7 +27,11 @@ from .models import (
 from .planning import ResearchPlanner, TopicPlanner
 from .reporting import ReportAgent
 from .runner import AgentRunner
-from .supervisor import ResearchSupervisor, SupervisorResult
+from .supervisor import (
+    ResearchSupervisor,
+    SupervisorResult,
+    _request_with_plan_objective,
+)
 
 _CITATION_MARKER_PATTERN = re.compile(r"\[(E|S)([1-9][0-9]*)\]")
 _MARKER_LIKE_PATTERN = re.compile(r"\[(?:E|S)[^\]\n]*\]")
@@ -83,7 +87,11 @@ class _GapPlanner:
         )
         return PlanningRun(
             plan=ResearchPlan(
-                objective=request.topic.strip(),
+                objective=(
+                    request.brief.objective
+                    if request.brief is not None
+                    else request.topic.strip()
+                ),
                 questions=questions,
                 revision=self._round_number,
             )
@@ -105,6 +113,10 @@ def run_research(
         planner=planner or TopicPlanner(),
         runner=runner,
     ).run(request)
+    execution_request = _request_with_plan_objective(
+        request,
+        initial_supervision.plan.objective,
+    )
     supervisions = [initial_supervision]
     material = _build_material(request.topic.strip(), supervisions)
     trace = list(initial_supervision.trace)
@@ -120,7 +132,7 @@ def run_research(
         citations = material.fallback_citations
     else:
         draft = report_agent.write(
-            request=request,
+            request=execution_request,
             findings=material.findings,
             evidence=material.evidence,
             conflicts=material.conflicts,
@@ -147,7 +159,7 @@ def run_research(
         while True:
             citations = _ledger_marker_citations(raw_report, material.ledger)
             critique = report_agent.critique(
-                request=request,
+                request=execution_request,
                 report=raw_report,
                 findings=material.findings,
                 evidence=material.evidence,
@@ -172,7 +184,7 @@ def run_research(
             )
             claims = _citation_claims(raw_report, citations)
             verification = report_agent.verify(
-                request=request,
+                request=execution_request,
                 claims=claims,
                 max_tool_calls=remaining_verification_calls,
             )
@@ -211,7 +223,7 @@ def run_research(
                     )
                 )
                 gap_request = replace(
-                    request,
+                    execution_request,
                     budget=replace(
                         request.budget,
                         max_tool_calls=remaining_tool_calls,
@@ -237,7 +249,7 @@ def run_research(
                 material = _build_material(request.topic.strip(), supervisions)
 
             revised = report_agent.revise(
-                request=request,
+                request=execution_request,
                 report=raw_report,
                 critique=critique,
                 verification=verification,

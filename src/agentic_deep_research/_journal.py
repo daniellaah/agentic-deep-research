@@ -24,6 +24,7 @@ from .models import (
     AgentRun,
     CitationClaim,
     CitationVerification,
+    ConversationMessage,
     Evidence,
     EvidenceConflict,
     PlanningRun,
@@ -32,11 +33,13 @@ from .models import (
     ResearchBudget,
     ResearchFinding,
     ResearchRequest,
+    ScopingRun,
     Source,
 )
 from .planning import ResearchPlanner
 from .reporting import ReportAgent
 from .runner import AgentRunner
+from .scoping import ResearchScoper
 
 _T = TypeVar("_T")
 
@@ -193,6 +196,10 @@ class _EffectJournal:
             mutation,
         )
 
+    def require_plan_approval(self) -> None:
+        """Pause immediately after the initial plan when review is configured."""
+        self._check_control("runner.run")
+
     def _check_control(self, kind: str, *, enforce_approval: bool = True) -> None:
         with self._lock:
             state = self._store.update_owned(
@@ -261,7 +268,7 @@ class _JournaledPlanner:
             "max_questions": max_questions,
             "revision": revision,
         }
-        return self._journal.invoke(
+        planning_run = self._journal.invoke(
             kind="planner.plan",
             component=self._inner,
             inputs=inputs,
@@ -273,6 +280,27 @@ class _JournaledPlanner:
                 max_questions=max_questions,
                 revision=revision,
             ),
+        )
+        if revision == 0:
+            self._journal.require_plan_approval()
+            approved_plan = self._journal.state.approved_plan
+            if approved_plan is not None:
+                return replace(planning_run, plan=approved_plan)
+        return planning_run
+
+
+class _JournaledScoper:
+    def __init__(self, inner: ResearchScoper, journal: _EffectJournal) -> None:
+        self._inner = inner
+        self._journal = journal
+
+    def scope(self, *, messages: tuple[ConversationMessage, ...]) -> ScopingRun:
+        return self._journal.invoke(
+            kind="scope.resolve",
+            component=self._inner,
+            inputs={"messages": messages},
+            result_type="ScopingRun",
+            call=lambda: self._inner.scope(messages=messages),
         )
 
 
@@ -474,15 +502,17 @@ def _engine_fingerprint(
     runner: AgentRunner,
     planner: ResearchPlanner | None,
     report_agent: ReportAgent | None,
+    scoper: ResearchScoper | None,
     retry_policy: RetryPolicy,
 ) -> str:
     payload = {
-        "workflow_version": 3,
+        "workflow_version": 4,
         "runner": _component_fingerprint(runner),
         "planner": None if planner is None else _component_fingerprint(planner),
         "report_agent": (
             None if report_agent is None else _component_fingerprint(report_agent)
         ),
+        "scoper": None if scoper is None else _component_fingerprint(scoper),
         "retry_policy": {
             "max_attempts": retry_policy.max_attempts,
             "initial_delay_seconds": retry_policy.initial_delay_seconds,

@@ -13,6 +13,7 @@ from .models import (
     EvidenceConflict,
     EvidenceLedger,
     ResearchArtifact,
+    ResearchBrief,
     ResearchBudget,
     ResearchPlan,
     ResearchQuestion,
@@ -102,6 +103,10 @@ class ResearchSupervisor:
             )
         ]
         initial_plan = planning_runs[0].plan
+        execution_request = _request_with_plan_objective(
+            request,
+            initial_plan.objective,
+        )
         pending = _new_questions((), initial_plan.questions)
         all_questions = list(pending)
         round_questions = tuple(pending)
@@ -230,7 +235,7 @@ class ResearchSupervisor:
                     )
                 )
             batch_runs = self._run_batch(
-                request=request,
+                request=execution_request,
                 questions=batch,
                 contexts=[pack.text for pack in context_packs],
                 budget=worker_budget,
@@ -308,7 +313,7 @@ class ResearchSupervisor:
                 )
             )
             planning_run = self._planner.plan(
-                request=request,
+                request=execution_request,
                 context=planning_context.text,
                 completed_questions=tuple(
                     planned_question.question
@@ -373,7 +378,7 @@ class ResearchSupervisor:
             )
 
         final_plan = ResearchPlan(
-            objective=planning_runs[-1].plan.objective,
+            objective=initial_plan.objective,
             questions=tuple(all_questions),
             revision=revision,
         )
@@ -397,7 +402,6 @@ class ResearchSupervisor:
             ledger=evidence_store.snapshot(),
             artifacts=tuple(artifacts),
         )
-
     def _decide(
         self,
         *,
@@ -454,6 +458,22 @@ class ResearchSupervisor:
                 for question, context in zip(questions, contexts, strict=True)
             ]
             return [future.result() for future in futures]
+
+
+def _request_with_plan_objective(
+    request: ResearchRequest,
+    objective: str,
+) -> ResearchRequest:
+    """Build an execution-only brief without mutating the checkpoint request."""
+    brief = request.brief
+    if brief is None:
+        brief = ResearchBrief(
+            research_question=request.topic.strip(),
+            objective=objective,
+        )
+    else:
+        brief = replace(brief, objective=objective)
+    return replace(request, brief=brief)
 
 
 def _new_questions(

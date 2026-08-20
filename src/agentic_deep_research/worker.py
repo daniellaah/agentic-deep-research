@@ -1,5 +1,7 @@
 """Independent execution unit for one planned research question."""
 
+import json
+from dataclasses import asdict
 from typing import Protocol
 
 from .models import AgentRun, ResearchBudget, ResearchQuestion, ResearchRequest
@@ -45,10 +47,12 @@ class IndependentResearchWorker:
         context: str,
         budget: ResearchBudget,
     ) -> AgentRun:
+        brief = None if request.brief is None else asdict(request.brief)
         return self._runner.run(
             instructions=_WORKER_INSTRUCTIONS,
             task=(
                 f"Research topic:\n{request.topic.strip()}\n\n"
+                f"Research brief:\n{json.dumps(brief, ensure_ascii=False)}\n\n"
                 f"Research question:\n{question.question}\n\n"
                 f"Question rationale:\n{question.rationale}\n\n"
                 f"Prior evidence:\n{context or 'No prior evidence is available.'}\n\n"

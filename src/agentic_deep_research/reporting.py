@@ -2,6 +2,7 @@
 
 import json
 from collections.abc import Mapping
+from dataclasses import asdict
 from typing import Any, Protocol
 
 from openai import OpenAI
@@ -215,6 +216,9 @@ class OpenAIReportAgent:
             input=json.dumps(
                 {
                     "topic": request.topic,
+                    "research_brief": (
+                        None if request.brief is None else asdict(request.brief)
+                    ),
                     "claims": [
                         {
                             "claim_id": item.claim_id,
@@ -355,8 +359,10 @@ def _report_input(
         for item in findings
     )
     body = _pack_complete_records(records, request.budget.max_context_chars)
+    brief = None if request.brief is None else asdict(request.brief)
     return (
         f"TOPIC\n{request.topic}\n\n"
+        f"RESEARCH BRIEF\n{json.dumps(brief, ensure_ascii=False)}\n\n"
         f"OUTPUT LANGUAGE\n{request.language}\n\n"
         "CONTROLLED EVIDENCE CATALOG AND RESEARCH RECORDS\n"
         "Each following line is one complete JSON record. Only evidence records "

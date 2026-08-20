@@ -1,5 +1,6 @@
 """Serializable run state and atomic local checkpoint storage."""
 
+import hashlib
 import json
 import os
 import re
@@ -14,15 +15,21 @@ from types import UnionType
 from typing import Any, Protocol, Union, get_args, get_origin, get_type_hints
 from uuid import uuid4
 
+from .events import RunEvent, event_from_json, event_to_json, project_event
 from .models import (
     AgentRun,
     CitationVerification,
+    ClarificationDecision,
+    ConversationMessage,
+    PlanControlRecord,
     PlanningRun,
     ReportCritique,
     ReportDraft,
+    ResearchBrief,
     ResearchPlan,
     ResearchRequest,
     ResearchResult,
+    ScopingRun,
 )
 
 _RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
@@ -41,6 +48,7 @@ _RESULT_TYPES = {
     "ReportDraft": ReportDraft,
     "ReportCritique": ReportCritique,
     "CitationVerification": CitationVerification,
+    "ScopingRun": ScopingRun,
 }
 
 
@@ -80,6 +88,9 @@ class RunState:
     current_step: str = "created"
     completed_steps: tuple[str, ...] = ()
     effects: tuple[EffectRecord, ...] = ()
+    conversation: tuple[ConversationMessage, ...] = ()
+    clarification: ClarificationDecision | None = None
+    plan_controls: tuple[PlanControlRecord, ...] = ()
     result: ResearchResult | None = None
     requires_approval: bool = False
     approval_status: str = "not_requested"
@@ -106,13 +117,41 @@ class RunState:
 
     @property
     def plan(self) -> ResearchPlan | None:
-        """Return the latest checkpointed plan available for inspection."""
-        for effect in reversed(self.effects):
+        """Return the latest human edit, otherwise the latest generated plan."""
+        for control in reversed(self.plan_controls):
+            if control.kind == "edit":
+                return control.plan
+        for effect in self.effects:
             if effect.status == "completed" and effect.result_type == "PlanningRun":
                 planning_run = _decode_result(effect.result_type, effect.result)
-                if isinstance(planning_run, PlanningRun):
+                if (
+                    isinstance(planning_run, PlanningRun)
+                    and planning_run.plan.revision == 0
+                ):
                     return planning_run.plan
         return self.result.plan if self.result is not None else None
+
+    @property
+    def approved_plan(self) -> ResearchPlan | None:
+        """Return the immutable plan snapshot most recently approved by a human."""
+        for control in reversed(self.plan_controls):
+            if control.kind == "approve":
+                return control.plan
+        return None
+
+    @property
+    def plan_hash(self) -> str | None:
+        """Return the concurrency identity of the currently inspectable plan."""
+        for control in reversed(self.plan_controls):
+            if control.kind == "edit":
+                return control.plan_hash
+        plan = self.plan
+        return None if plan is None else research_plan_hash(plan)
+
+    @property
+    def brief(self) -> ResearchBrief | None:
+        """Return the single persisted research-brief source of truth."""
+        return self.request.brief
 
     @classmethod
     def create(
@@ -243,7 +282,7 @@ class JsonCheckpointStore:
         with self._lock:
             current = self._leases.get(run_id)
             now = time.time()
-            if current is None or current[0] != owner_id or current[1] <= now:
+            if current is None or current[0] != owner_id:
                 raise RuntimeError(f"execution lease lost: {run_id}")
             updated = mutation(self.load(run_id))
             self.save(updated)
@@ -305,12 +344,28 @@ class SQLiteCheckpointStore:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS research_run_events (
+                    run_id TEXT NOT NULL,
+                    sequence INTEGER NOT NULL,
+                    state_version INTEGER NOT NULL,
+                    event_type TEXT NOT NULL,
+                    occurred_at TEXT NOT NULL,
+                    payload_json TEXT NOT NULL,
+                    PRIMARY KEY (run_id, sequence)
+                )
+                """
+            )
+            _backfill_event_snapshots(connection)
         os.chmod(self._path, 0o600)
 
     def create(self, state: RunState) -> None:
-        """Insert a new run identity atomically."""
+        """Atomically insert a new run together with its first public event."""
+        connection = self._connect()
         try:
-            with self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            try:
                 connection.execute(
                     """
                     INSERT INTO research_runs (run_id, state_json, state_version)
@@ -318,23 +373,45 @@ class SQLiteCheckpointStore:
                     """,
                     (state.run_id, _serialize_state(state), state.state_version),
                 )
-        except sqlite3.IntegrityError as error:
-            raise FileExistsError(f"checkpoint already exists: {state.run_id}") from error
+            except sqlite3.IntegrityError as error:
+                raise FileExistsError(
+                    f"checkpoint already exists: {state.run_id}"
+                ) from error
+            _append_event(connection, None, state)
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def save(self, state: RunState) -> None:
-        """Insert or replace a full state in one transaction."""
-        payload = _serialize_state(state)
-        with self._connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO research_runs (run_id, state_json, state_version)
-                VALUES (?, ?, ?)
-                ON CONFLICT(run_id) DO UPDATE SET
-                    state_json = excluded.state_json,
-                    state_version = excluded.state_version
-                """,
-                (state.run_id, payload, state.state_version),
-            )
+        """Insert a state or commit one valid next-version transition."""
+        connection = self._connect()
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT state_json FROM research_runs WHERE run_id = ?",
+                (state.run_id,),
+            ).fetchone()
+            if row is None:
+                connection.execute(
+                    """
+                    INSERT INTO research_runs (run_id, state_json, state_version)
+                    VALUES (?, ?, ?)
+                    """,
+                    (state.run_id, _serialize_state(state), state.state_version),
+                )
+                _append_event(connection, None, state)
+            else:
+                previous = _deserialize_state(str(row[0]))
+                _persist_transition(connection, previous, state)
+            connection.commit()
+        except BaseException:
+            connection.rollback()
+            raise
+        finally:
+            connection.close()
 
     def load(self, run_id: str) -> RunState:
         """Load the latest committed state for a run."""
@@ -347,6 +424,37 @@ class SQLiteCheckpointStore:
         if row is None:
             raise FileNotFoundError(f"checkpoint not found: {run_id}")
         return _deserialize_state(str(row[0]))
+
+    def list_events(
+        self,
+        run_id: str,
+        *,
+        after_sequence: int = -1,
+        limit: int = 100,
+    ) -> tuple[RunEvent, ...]:
+        """Return durable public events after an exclusive per-run cursor."""
+        _validate_run_id(run_id)
+        if isinstance(after_sequence, bool) or after_sequence < -1:
+            raise ValueError("after_sequence must be at least -1")
+        if isinstance(limit, bool) or not 1 <= limit <= 100:
+            raise ValueError("event limit must be between 1 and 100")
+        with self._connect() as connection:
+            if connection.execute(
+                "SELECT 1 FROM research_runs WHERE run_id = ?",
+                (run_id,),
+            ).fetchone() is None:
+                raise FileNotFoundError(f"checkpoint not found: {run_id}")
+            rows = connection.execute(
+                """
+                SELECT payload_json
+                FROM research_run_events
+                WHERE run_id = ? AND sequence > ?
+                ORDER BY sequence
+                LIMIT ?
+                """,
+                (run_id, after_sequence, limit),
+            ).fetchall()
+        return tuple(event_from_json(str(row[0])) for row in rows)
 
     def update(
         self,
@@ -364,15 +472,9 @@ class SQLiteCheckpointStore:
             ).fetchone()
             if row is None:
                 raise FileNotFoundError(f"checkpoint not found: {run_id}")
-            updated = mutation(_deserialize_state(str(row[0])))
-            connection.execute(
-                """
-                UPDATE research_runs
-                SET state_json = ?, state_version = ?
-                WHERE run_id = ?
-                """,
-                (_serialize_state(updated), updated.state_version, run_id),
-            )
+            previous = _deserialize_state(str(row[0]))
+            updated = mutation(previous)
+            _persist_transition(connection, previous, updated)
             connection.commit()
             return updated
         except BaseException:
@@ -401,7 +503,6 @@ class SQLiteCheckpointStore:
             if (
                 lease is None
                 or str(lease[0]) != owner_id
-                or float(lease[1]) <= now
             ):
                 raise RuntimeError(f"execution lease lost: {run_id}")
             row = connection.execute(
@@ -410,15 +511,9 @@ class SQLiteCheckpointStore:
             ).fetchone()
             if row is None:
                 raise FileNotFoundError(f"checkpoint not found: {run_id}")
-            updated = mutation(_deserialize_state(str(row[0])))
-            connection.execute(
-                """
-                UPDATE research_runs
-                SET state_json = ?, state_version = ?
-                WHERE run_id = ?
-                """,
-                (_serialize_state(updated), updated.state_version, run_id),
-            )
+            previous = _deserialize_state(str(row[0]))
+            updated = mutation(previous)
+            _persist_transition(connection, previous, updated)
             connection.execute(
                 """
                 UPDATE research_run_leases
@@ -493,7 +588,110 @@ class SQLiteCheckpointStore:
             )
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._path, timeout=30)
+        connection = sqlite3.connect(self._path, timeout=30)
+        connection.execute("PRAGMA busy_timeout = 30000")
+        return connection
+
+
+def _persist_transition(
+    connection: sqlite3.Connection,
+    previous: RunState,
+    current: RunState,
+) -> None:
+    """Commit one state change and its public event inside the caller transaction."""
+    if current.run_id != previous.run_id:
+        raise ValueError("checkpoint mutation must not change run_id")
+    previous_payload = _serialize_state(previous)
+    current_payload = _serialize_state(current)
+    if current_payload == previous_payload:
+        return
+    if current.state_version != previous.state_version + 1:
+        raise ValueError("checkpoint mutation must increment state_version exactly once")
+    connection.execute(
+        """
+        UPDATE research_runs
+        SET state_json = ?, state_version = ?
+        WHERE run_id = ?
+        """,
+        (current_payload, current.state_version, current.run_id),
+    )
+    _append_event(connection, previous, current)
+
+
+def _append_event(
+    connection: sqlite3.Connection,
+    previous: RunState | None,
+    current: RunState,
+    *,
+    history_complete: bool = True,
+    ignore_conflict: bool = False,
+) -> RunEvent:
+    row = connection.execute(
+        """
+        SELECT COALESCE(MAX(sequence), -1) + 1
+        FROM research_run_events
+        WHERE run_id = ?
+        """,
+        (current.run_id,),
+    ).fetchone()
+    sequence = int(row[0]) if row is not None else 0
+    event = project_event(
+        previous,
+        current,
+        sequence,
+        history_complete=history_complete,
+    )
+    insert = (
+        "INSERT OR IGNORE INTO research_run_events"
+        if ignore_conflict
+        else "INSERT INTO research_run_events"
+    )
+    connection.execute(
+        f"""
+        {insert} (
+            run_id,
+            sequence,
+            state_version,
+            event_type,
+            occurred_at,
+            payload_json
+        ) VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (
+            event.run_id,
+            event.sequence,
+            event.state_version,
+            event.event_type,
+            event.occurred_at,
+            event_to_json(event),
+        ),
+    )
+    return event
+
+
+def _backfill_event_snapshots(connection: sqlite3.Connection) -> None:
+    """Give pre-event databases one honest snapshot without inventing history."""
+    rows = connection.execute(
+        """
+        SELECT runs.state_json
+        FROM research_runs AS runs
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM research_run_events AS events
+            WHERE events.run_id = runs.run_id
+        )
+        ORDER BY runs.run_id
+        """
+    ).fetchall()
+    for row in rows:
+        state = _deserialize_state(str(row[0]))
+        _append_event(
+            connection,
+            None,
+            state,
+            history_complete=False,
+            ignore_conflict=True,
+        )
 
 
 def _transition(state: RunState, **changes: object) -> RunState:
@@ -520,6 +718,8 @@ def _state_to_dict(state: RunState) -> dict[str, object]:
     payload = asdict(state)
     payload["completed_steps"] = list(state.completed_steps)
     payload["effects"] = [asdict(effect) for effect in state.effects]
+    payload["conversation"] = [asdict(message) for message in state.conversation]
+    payload["plan_controls"] = [asdict(control) for control in state.plan_controls]
     return payload
 
 
@@ -546,7 +746,19 @@ def _state_from_dict(payload: dict[str, object]) -> RunState:
     if not isinstance(raw_effects, list):
         raise TypeError("checkpoint effects must be a JSON array")
     effects = tuple(_decode_dataclass(EffectRecord, item) for item in raw_effects)
-    return RunState(
+    raw_conversation = payload.get("conversation", [])
+    if not isinstance(raw_conversation, list):
+        raise TypeError("checkpoint conversation must be a JSON array")
+    conversation = tuple(
+        _decode_dataclass(ConversationMessage, item) for item in raw_conversation
+    )
+    raw_plan_controls = payload.get("plan_controls", [])
+    if not isinstance(raw_plan_controls, list):
+        raise TypeError("checkpoint plan_controls must be a JSON array")
+    plan_controls = tuple(
+        _decode_dataclass(PlanControlRecord, item) for item in raw_plan_controls
+    )
+    state = RunState(
         run_id=str(payload.get("run_id", "")),
         request=request,
         engine_fingerprint=str(payload.get("engine_fingerprint", "")),
@@ -555,6 +767,16 @@ def _state_from_dict(payload: dict[str, object]) -> RunState:
         current_step=str(payload.get("current_step", "")),
         completed_steps=tuple(str(item) for item in raw_completed_steps),
         effects=effects,
+        conversation=conversation,
+        clarification=(
+            None
+            if payload.get("clarification") is None
+            else _decode_dataclass(
+                ClarificationDecision,
+                payload.get("clarification"),
+            )
+        ),
+        plan_controls=plan_controls,
         result=(
             None
             if payload.get("result") is None
@@ -572,6 +794,8 @@ def _state_from_dict(payload: dict[str, object]) -> RunState:
         created_at=str(payload.get("created_at", "")),
         updated_at=str(payload.get("updated_at", "")),
     )
+    _validate_loaded_plan_controls(state)
+    return state
 
 
 def _decode_result(result_type: str, payload: object) -> object:
@@ -633,6 +857,103 @@ def _optional_string(value: object) -> str | None:
 
 def _timestamp() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def research_plan_hash(plan: ResearchPlan) -> str:
+    """Return a stable SHA-256 digest for optimistic plan controls."""
+    encoded = json.dumps(
+        _to_jsonable(plan),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def research_plan_version_hash(plan: ResearchPlan, base_plan_hash: str) -> str:
+    """Bind a plan version to its parent so equal content cannot create ABA."""
+    encoded = json.dumps(
+        {
+            "base_plan_hash": base_plan_hash,
+            "plan": _to_jsonable(plan),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def plan_control_input_hash(
+    *,
+    run_id: str,
+    kind: str,
+    base_plan_hash: str,
+    plan: ResearchPlan,
+) -> str:
+    """Return the stable identity of one append-only plan control command."""
+    encoded = json.dumps(
+        {
+            "schema_version": 1,
+            "run_id": run_id,
+            "kind": kind,
+            "base_plan_hash": base_plan_hash,
+            "plan": _to_jsonable(plan),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_loaded_plan_controls(state: RunState) -> None:
+    if not state.plan_controls:
+        return
+    generated_plan = _initial_generated_plan(state.effects)
+    if generated_plan is None:
+        raise ValueError("plan controls require an initial generated plan")
+    current_plan = generated_plan
+    current_hash = research_plan_hash(generated_plan)
+    approved = False
+    for control in state.plan_controls:
+        if approved:
+            raise ValueError("plan controls cannot follow approval")
+        expected_input_hash = plan_control_input_hash(
+            run_id=state.run_id,
+            kind=control.kind,
+            base_plan_hash=control.base_plan_hash,
+            plan=control.plan,
+        )
+        if control.input_hash != expected_input_hash:
+            raise ValueError("plan control has an invalid input hash")
+        if control.base_plan_hash != current_hash:
+            raise ValueError("plan control history has an invalid base plan hash")
+        if control.kind == "edit":
+            expected_hash = research_plan_version_hash(
+                control.plan,
+                control.base_plan_hash,
+            )
+            if control.plan_hash != expected_hash:
+                raise ValueError("edited plan control has an invalid plan hash")
+            current_plan = control.plan
+            current_hash = control.plan_hash
+            continue
+        if control.plan != current_plan or control.plan_hash != current_hash:
+            raise ValueError("approval does not match the current plan snapshot")
+        approved = True
+
+
+def _initial_generated_plan(
+    effects: tuple[EffectRecord, ...],
+) -> ResearchPlan | None:
+    for effect in effects:
+        if effect.status != "completed" or effect.result_type != "PlanningRun":
+            continue
+        planning_run = _decode_result(effect.result_type, effect.result)
+        if isinstance(planning_run, PlanningRun) and planning_run.plan.revision == 0:
+            return planning_run.plan
+    return None
 
 
 def _validate_run_id(run_id: str) -> None:

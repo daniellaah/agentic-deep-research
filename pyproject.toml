@@ -5,12 +5,15 @@ description = "A product-grade deep research agent built step by step in Python"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "fastapi>=0.135,<1",
     "openai>=1.0,<3",
     "python-dotenv>=1.1,<2",
+    "uvicorn>=0.35,<1",
 ]
 
 [project.scripts]
 deep-research = "agentic_deep_research.cli:main"
+deep-research-api = "agentic_deep_research.api:main"
 deep-research-eval = "agentic_deep_research.benchmark_cli:main"
 
 [build-system]
@@ -22,6 +25,7 @@ benchmark = [
     "datasets>=4,<5",
 ]
 dev = [
+    "httpx>=0.28,<1",
     "ipykernel>=6.29,<7",
     "jupyterlab>=4.4,<5",
     "pytest>=8,<10",

@@ -2,7 +2,7 @@
 
 Agentic Deep Research is a Python project for building a reliable deep research agent with testable workflows and clear model and tool boundaries.
 
-The current engine uses the OpenAI Responses API inside a small, explicit agent harness. An adaptive planner creates research questions, a deterministic supervisor enforces global limits and evidence sufficiency, and independent workers investigate questions in bounded parallel batches. A source-diverse `ContextPack` carries only complete citation-linked records between batches instead of truncating arbitrary text. A writer then synthesizes a report from controlled source markers, while a critic and citation verifier drive bounded gap-search and revision rounds. A durable runtime checkpoints every provider-facing operation so an interrupted run can resume without repeating work that was already saved.
+The current engine uses the OpenAI Responses API inside a small, explicit agent harness. A scoper first turns a request into a structured `ResearchBrief`, asking one material clarification when necessary. An adaptive planner creates research questions, a deterministic supervisor enforces global limits and evidence sufficiency, and independent workers investigate questions in bounded parallel batches. A source-diverse `ContextPack` carries only complete citation-linked records between batches instead of truncating arbitrary text. A writer then synthesizes a report from controlled source markers, while a critic and citation verifier drive bounded gap-search and revision rounds. A durable runtime checkpoints every provider-facing operation so an interrupted run can resume without repeating work that was already saved.
 
 The result contains the research plan, cited findings, a versioned evidence ledger, reported conflicts, draft and revision artifacts, citation-support judgments, observable control and web actions, stop reason, and token usage. Private model reasoning is never stored.
 
@@ -13,9 +13,11 @@ Every canonical source and evidence record receives a stable ID. Tracking parame
 The core flow is:
 
 ```text
-ResearchRequest
-  -> Durable Runtime (checkpoint, retry, approval, cancellation)
+Conversation / ResearchRequest
+  -> Scoper (clarification or structured ResearchBrief)
+  -> Durable Runtime (checkpoint, retry, cancellation, execution lease)
   -> Adaptive Planner
+  -> Human Plan Review (optional edit + exact-snapshot approval)
   -> Supervisor (budget, scheduling, deterministic sufficiency, replanning)
   -> Independent Research Workers (Responses API + web_search)
   -> Evidence Ledger (stable identity, provenance, deduplication, conflicts)
@@ -185,6 +187,109 @@ if result is not None:
 
 `OpenAI(max_retries=0)` is intentional here: the durable runtime owns and records retries, avoiding a hidden SDK retry layer. The lower-level `run_research(...)` function remains available for short, stateless calls that do not need persistence or operational controls.
 
+## Local Product API
+
+Run the local background service with the same model configured in `.env`:
+
+```bash
+uv run deep-research-api
+```
+
+It binds to `127.0.0.1:8000` and exposes interactive OpenAPI documentation at
+`http://127.0.0.1:8000/docs`. Creating a run first commits a durable checkpoint and
+then returns HTTP `202 Accepted`; provider work continues in a bounded background
+executor:
+
+```bash
+curl -X POST http://127.0.0.1:8000/v1/research-runs \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "run_id": "reliability-study",
+    "topic": "What makes a research agent reliable?",
+    "min_sources": 2
+  }'
+
+curl http://127.0.0.1:8000/v1/research-runs/reliability-study
+```
+
+The API requires plan approval by default. A vague request may first return
+`action_required: "clarification"`; submit the answer together with the
+`state_version` you inspected so a stale browser tab cannot overwrite newer state:
+
+```bash
+curl -X POST \
+  http://127.0.0.1:8000/v1/research-runs/reliability-study/clarification \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "answer": "Write for production ML engineers.",
+    "expected_state_version": 4
+  }'
+```
+
+When `action_required` becomes `plan_approval`, either approve its exact
+`plan_hash`, or edit the objective and question list first. Edits and approvals are
+append-only control records: the original model-generated plan remains available for
+audit, while only the approved snapshot executes.
+
+```bash
+curl -X PUT http://127.0.0.1:8000/v1/research-runs/reliability-study/plan \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "expected_plan_hash": "<64-character hash from GET>",
+    "objective": "Produce an implementation-focused reliability guide.",
+    "questions": [
+      {
+        "question": "Which controls measurably improve research-agent reliability?",
+        "rationale": "Prioritize evidence that can guide implementation."
+      }
+    ]
+  }'
+
+curl -X POST \
+  http://127.0.0.1:8000/v1/research-runs/reliability-study/plan/approve \
+  -H 'Content-Type: application/json' \
+  -d '{"expected_plan_hash": "<hash returned by the edit>"}'
+```
+
+Poll durable lifecycle events or reconnect to their SSE stream with
+`Last-Event-ID`. These events expose phases and provider-effect boundaries—not model
+reasoning, prompts, reports, or token-by-token output:
+
+```bash
+curl 'http://127.0.0.1:8000/v1/research-runs/reliability-study/events?after_sequence=-1'
+
+curl -N http://127.0.0.1:8000/v1/research-runs/reliability-study/events/stream
+```
+
+After the runtime reaches `completed`, download deterministic, integrity-checked
+artifacts:
+
+```bash
+curl -OJ \
+  http://127.0.0.1:8000/v1/research-runs/reliability-study/artifacts/research.json
+curl -OJ \
+  http://127.0.0.1:8000/v1/research-runs/reliability-study/artifacts/report.md
+```
+
+If the service process stops, checkpoints and event history remain in SQLite; start
+the service again and resume explicitly with a JSON request:
+
+```bash
+curl -X POST \
+  http://127.0.0.1:8000/v1/research-runs/reliability-study/resume \
+  -H 'Content-Type: application/json' \
+  -d '{}'
+```
+
+The first service
+milestone intentionally uses one process (`uvicorn --workers 1`) and an in-process job
+queue. It has server-side cost ceilings and only permits loopback binding, but it does
+not yet provide authentication, tenant isolation, or a durable distributed queue.
+Those controls—plus an infrastructure-level request-body limit and redacted
+validation/logging—are mandatory before exposing it on a network. Cancellation
+remains cooperative: an already-running provider request may finish, but no later
+effect is scheduled.
+
 Checkpoints contain the complete report, evidence, source URLs, traces, and error messages. Treat the SQLite file as potentially sensitive application data. The local store creates it with owner-only file permissions, and `.gitignore` prevents accidental repository commits; deployment still needs normal backup, access-control, and retention policies.
 
 Web search requests consume API tokens and built-in tool calls. Unit tests use fake responses and do not make paid API calls.
@@ -207,7 +312,7 @@ uv run --group benchmark deep-research-eval download frames \
 uv run --group benchmark deep-research-eval run frames \
   --data .benchmarks/data/frames.jsonl \
   --experiment-dir .benchmarks/experiments/frames-dev10 \
-  --experiment-id frames-dev10-live-web-v3 \
+  --experiment-id frames-dev10-live-web-v4 \
   --limit 10
 ```
 
@@ -222,7 +327,7 @@ uv run --group benchmark deep-research-eval download browsecomp-plus \
 uv run --group benchmark deep-research-eval run browsecomp-plus \
   --data .benchmarks/data/browsecomp-plus-dev10.jsonl \
   --experiment-dir .benchmarks/experiments/browsecomp-plus-dev10 \
-  --experiment-id browsecomp-plus-dev10-live-web-v3 \
+  --experiment-id browsecomp-plus-dev10-live-web-v4 \
   --limit 10
 ```
 
