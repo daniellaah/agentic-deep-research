@@ -15,6 +15,7 @@ from agentic_deep_research import (
     TokenUsage,
     run_research,
 )
+from agentic_deep_research.supervisor import ResearchSupervisor
 
 
 class FakePlanner:
@@ -151,10 +152,40 @@ def test_run_research_executes_an_explicit_adaptive_plan() -> None:
     assert [finding.question_id for finding in result.findings] == ["q1", "q2"]
     assert [evidence.question_id for evidence in result.evidence] == ["q1", "q2"]
     assert len(result.sources) == 2
+    assert result.ledger is not None
+    assert result.sources == result.ledger.sources
+    assert result.evidence == result.ledger.evidence
+    assert result.conflicts == result.ledger.conflicts
+    assert result.citation_checks == result.ledger.checks
     assert result.status == "completed"
     assert result.stop_reason == "completed"
     assert result.usage.total_tokens == 50
     assert any(step.action == "plan_created" for step in result.trace)
+
+
+def test_supervisor_returns_one_ledger_snapshot_with_compatibility_views() -> None:
+    question = ResearchQuestion(id="q1", question="Which evidence is reliable?")
+    planner = FakePlanner(
+        [PlanningRun(plan=ResearchPlan("Collect reliable evidence", (question,)))]
+    )
+    runner = FakeRunner(
+        {
+            question.question: _cited_run(
+                question.question,
+                "An evaluation supports the result.",
+                "ledger",
+            )
+        }
+    )
+
+    supervision = ResearchSupervisor(planner=planner, runner=runner).run(
+        ResearchRequest(topic="Reliable evidence", min_sources=1)
+    )
+
+    assert supervision.sources == supervision.ledger.sources
+    assert supervision.evidence == supervision.ledger.evidence
+    assert supervision.conflicts == supervision.ledger.conflicts
+    assert supervision.artifacts[0].id == "finding:q1"
 
 
 def test_supervisor_replans_when_a_question_produces_no_evidence() -> None:
@@ -341,8 +372,8 @@ def test_evidence_store_deduplicates_and_tracks_quality_confidence_and_conflicts
 
     assert len(result.evidence) == 2
     assert {item.confidence for item in result.evidence} == {"high"}
-    assert {item.source.quality for item in result.evidence} == {"primary"}
-    assert [source.quality for source in result.sources] == ["primary", "primary"]
+    assert {item.source.quality for item in result.evidence} == {"unknown"}
+    assert [source.quality for source in result.sources] == ["unknown", "unknown"]
     assert all(citation.source in result.sources for citation in result.citations)
     assert result.report.count("https://example.gov/study") == 1
     assert len(result.conflicts) == 1

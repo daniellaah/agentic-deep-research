@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass, replace
 
-from .evidence import EvidenceStore
+from .evidence import canonicalize_url
 from .models import (
     AgentRun,
     Citation,
@@ -11,6 +11,7 @@ from .models import (
     CitationClaim,
     Evidence,
     EvidenceConflict,
+    EvidenceLedger,
     PlanningRun,
     ReportCritique,
     ResearchArtifact,
@@ -28,6 +29,9 @@ from .reporting import ReportAgent
 from .runner import AgentRunner
 from .supervisor import ResearchSupervisor, SupervisorResult
 
+_CITATION_MARKER_PATTERN = re.compile(r"\[(E|S)([1-9][0-9]*)\]")
+_MARKER_LIKE_PATTERN = re.compile(r"\[(?:E|S)[^\]\n]*\]")
+
 
 @dataclass(frozen=True)
 class _ResearchMaterial:
@@ -35,12 +39,22 @@ class _ResearchMaterial:
     fallback_report: str
     fallback_citations: tuple[Citation, ...]
     findings: tuple[ResearchFinding, ...]
-    sources: tuple[Source, ...]
-    evidence: tuple[Evidence, ...]
-    conflicts: tuple[EvidenceConflict, ...]
+    ledger: EvidenceLedger
     status: str
     stop_reason: str
     usage: TokenUsage
+
+    @property
+    def sources(self) -> tuple[Source, ...]:
+        return self.ledger.sources
+
+    @property
+    def evidence(self) -> tuple[Evidence, ...]:
+        return self.ledger.evidence
+
+    @property
+    def conflicts(self) -> tuple[EvidenceConflict, ...]:
+        return self.ledger.conflicts
 
 
 class _GapPlanner:
@@ -113,7 +127,7 @@ def run_research(
             sources=material.sources,
         )
         raw_report = draft.report
-        citations = _source_marker_citations(raw_report, material.sources)
+        citations = _ledger_marker_citations(raw_report, material.ledger)
         reporting_usage.append(draft.usage)
         artifacts.append(
             ResearchArtifact(
@@ -131,7 +145,7 @@ def run_research(
         )
         verification_tool_calls = 0
         while True:
-            citations = _source_marker_citations(raw_report, material.sources)
+            citations = _ledger_marker_citations(raw_report, material.ledger)
             critique = report_agent.critique(
                 request=request,
                 report=raw_report,
@@ -156,12 +170,14 @@ def run_research(
                 0,
                 request.budget.max_verification_tool_calls - verification_tool_calls,
             )
+            claims = _citation_claims(raw_report, citations)
             verification = report_agent.verify(
                 request=request,
-                claims=_citation_claims(raw_report, citations),
+                claims=claims,
                 max_tool_calls=remaining_verification_calls,
             )
-            citation_checks = verification.checks
+            citation_checks = _bind_citation_checks(verification.checks, claims)
+            verification = replace(verification, checks=citation_checks)
             reporting_usage.append(verification.usage)
             trace.extend(verification.trace)
             verification_tool_calls += sum(step.kind == "tool" for step in verification.trace)
@@ -242,16 +258,18 @@ def run_research(
     citations = (
         material.fallback_citations
         if report_agent is None
-        else _source_marker_citations(raw_report, material.sources)
+        else _ledger_marker_citations(raw_report, material.ledger)
     )
     status, stop_reason = _quality_status(
         request,
         material.status,
         material.stop_reason,
         raw_report,
-        material.evidence,
-        material.sources,
+        material.ledger.evidence,
+        material.ledger.sources,
         citations,
+        has_unbound_markers=_has_unbound_markers(raw_report, material.ledger),
+        has_unbound_citations=any(not item.evidence_id for item in citations),
     )
     if status == "completed" and pipeline_stop_reason is not None:
         status, stop_reason = "needs_review", pipeline_stop_reason
@@ -271,24 +289,27 @@ def run_research(
         ):
             status, stop_reason = "needs_review", "revision_required"
 
+    final_ledger = material.ledger.with_checks(citation_checks)
+    final_findings = _ledger_findings(material.findings, final_ledger)
     return ResearchResult(
         topic=request.topic.strip(),
         report=_render_citations(raw_report, citations),
         raw_report=raw_report,
-        sources=material.sources,
+        sources=final_ledger.sources,
         citations=citations,
-        evidence=material.evidence,
+        evidence=final_ledger.evidence,
         trace=tuple(trace),
         status=status,
         stop_reason=stop_reason,
         usage=_sum_usage(material.usage, *reporting_usage),
         plan=material.plan,
-        findings=material.findings,
-        conflicts=material.conflicts,
+        findings=final_findings,
+        conflicts=final_ledger.conflicts,
         artifacts=tuple(artifacts),
         critique=critique,
-        citation_checks=citation_checks,
+        citation_checks=final_ledger.checks,
         revision_count=revision_count,
+        ledger=final_ledger,
     )
 
 
@@ -296,7 +317,7 @@ def _build_material(
     topic: str,
     supervisions: list[SupervisorResult],
 ) -> _ResearchMaterial:
-    evidence_store = EvidenceStore()
+    ledger = _merge_supervision_ledgers(supervisions)
     runs: list[tuple[str, str, AgentRun]] = []
     questions: list[ResearchQuestion] = []
     usage: list[TokenUsage] = []
@@ -309,16 +330,15 @@ def _build_material(
             status = supervision.status
             stop_reason = supervision.stop_reason
         for question, run in supervision.runs:
-            evidence_store.add_run(question.id, run)
             runs.append((question.id, question.question, run))
             usage.append(run.usage)
 
     fallback_report, fallback_citations, findings = _combine_findings(
         topic,
         runs,
-        evidence_store.sources,
-        evidence_store.evidence,
-        evidence_store.conflicts,
+        ledger.sources,
+        ledger.evidence,
+        ledger.conflicts,
     )
     return _ResearchMaterial(
         plan=ResearchPlan(
@@ -329,12 +349,93 @@ def _build_material(
         fallback_report=fallback_report,
         fallback_citations=fallback_citations,
         findings=findings,
-        sources=evidence_store.sources,
-        evidence=evidence_store.evidence,
-        conflicts=evidence_store.conflicts,
+        ledger=ledger,
         status=status,
         stop_reason=stop_reason,
         usage=_sum_usage(*usage),
+    )
+
+
+def _merge_supervision_ledgers(
+    supervisions: list[SupervisorResult],
+) -> EvidenceLedger:
+    """Merge immutable supervisor snapshots without regenerating stable IDs."""
+    sources: list[Source] = []
+    sources_by_key: dict[str, Source] = {}
+    for supervision in supervisions:
+        for source in supervision.ledger.sources:
+            key = _source_key(source)
+            if key not in sources_by_key:
+                sources_by_key[key] = source
+                sources.append(source)
+
+    evidence: list[Evidence] = []
+    evidence_keys: set[str] = set()
+    conflicts: list[EvidenceConflict] = []
+    conflict_keys: set[tuple[str, str, tuple[str, ...]]] = set()
+    checks: list[CitationCheck] = []
+    check_keys: set[tuple[str, str, str, str]] = set()
+    schema_version = 1
+    for supervision in supervisions:
+        ledger = supervision.ledger
+        schema_version = max(schema_version, ledger.schema_version)
+        for item in ledger.evidence:
+            key = item.id or "\n".join(
+                (item.question_id, _claim_key(item.claim), _source_key(item.source))
+            )
+            if key in evidence_keys:
+                continue
+            evidence.append(
+                replace(
+                    item,
+                    source=sources_by_key.get(_source_key(item.source), item.source),
+                )
+            )
+            evidence_keys.add(key)
+        for conflict in ledger.conflicts:
+            normalized_sources = tuple(
+                sources_by_key.get(_source_key(source), source)
+                for source in conflict.sources
+            )
+            key = (
+                conflict.question_id,
+                conflict.description.strip().casefold(),
+                tuple(sorted(_source_key(source) for source in normalized_sources)),
+            )
+            if key in conflict_keys:
+                continue
+            conflicts.append(replace(conflict, sources=normalized_sources))
+            conflict_keys.add(key)
+        for check in ledger.checks:
+            key = (check.claim_id, check.evidence_id, check.status, check.reason)
+            if key in check_keys:
+                continue
+            checks.append(check)
+            check_keys.add(key)
+
+    source_ids_by_claim: dict[str, set[str]] = {}
+    for item in evidence:
+        source_ids_by_claim.setdefault(_claim_key(item.claim), set()).add(
+            _source_key(item.source)
+        )
+    evidence = [
+        replace(
+            item,
+            confidence=(
+                "high"
+                if len(source_ids_by_claim[_claim_key(item.claim)]) >= 2
+                else "medium"
+            ),
+            corroboration_count=len(source_ids_by_claim[_claim_key(item.claim)]),
+        )
+        for item in evidence
+    ]
+    return EvidenceLedger(
+        schema_version=schema_version,
+        sources=tuple(sources),
+        evidence=tuple(evidence),
+        conflicts=tuple(conflicts),
+        checks=tuple(checks),
     )
 
 
@@ -391,23 +492,78 @@ def _gap_questions(
     return tuple(questions)
 
 
-def _source_marker_citations(
+def _ledger_marker_citations(
     report: str,
-    sources: tuple[Source, ...],
+    ledger: EvidenceLedger,
 ) -> tuple[Citation, ...]:
     citations: list[Citation] = []
-    for match in re.finditer(r"\[S([1-9][0-9]*)\]", report):
-        source_index = int(match.group(1)) - 1
-        if source_index >= len(sources):
+    for match in _CITATION_MARKER_PATTERN.finditer(report):
+        item_index = int(match.group(2)) - 1
+        if item_index < 0:
             continue
+        if match.group(1) == "E":
+            if item_index >= len(ledger.evidence):
+                continue
+            evidence = ledger.evidence[item_index]
+            source = evidence.source
+            evidence_id = (
+                evidence.id
+                if _claim_matches_evidence(
+                    _claim_before(report, match.start()),
+                    evidence,
+                )
+                else ""
+            )
+        else:
+            if item_index >= len(ledger.sources):
+                continue
+            source = ledger.sources[item_index]
+            evidence_id = _matching_evidence_id(
+                claim=_claim_before(report, match.start()),
+                source=source,
+                evidence=ledger.evidence,
+            )
         citations.append(
             Citation(
-                source=sources[source_index],
+                source=source,
                 start_index=match.start(),
                 end_index=match.end(),
+                evidence_id=evidence_id,
             )
         )
     return tuple(citations)
+
+
+def _has_unbound_markers(report: str, ledger: EvidenceLedger) -> bool:
+    """Reject syntactically valid markers that do not bind to ledger evidence."""
+    if any(
+        _CITATION_MARKER_PATTERN.fullmatch(match.group()) is None
+        for match in _MARKER_LIKE_PATTERN.finditer(report)
+    ):
+        return True
+    for match in _CITATION_MARKER_PATTERN.finditer(report):
+        item_index = int(match.group(2)) - 1
+        if item_index < 0:
+            return True
+        if match.group(1) == "E":
+            if item_index >= len(ledger.evidence):
+                return True
+            evidence = ledger.evidence[item_index]
+            if not evidence.id or not _claim_matches_evidence(
+                _claim_before(report, match.start()),
+                evidence,
+            ):
+                return True
+            continue
+        if item_index >= len(ledger.sources):
+            return True
+        if not _matching_evidence_id(
+            claim=_claim_before(report, match.start()),
+            source=ledger.sources[item_index],
+            evidence=ledger.evidence,
+        ):
+            return True
+    return False
 
 
 def _citation_claims(
@@ -420,9 +576,90 @@ def _citation_claims(
             source=citation.source,
             marker=report[citation.start_index : citation.end_index],
             claim_id=f"C{index}",
+            evidence_id=citation.evidence_id,
         )
         for index, citation in enumerate(citations, start=1)
     )
+
+
+def _bind_citation_checks(
+    checks: tuple[CitationCheck, ...],
+    claims: tuple[CitationClaim, ...],
+) -> tuple[CitationCheck, ...]:
+    """Bind exactly one conservative verifier judgment to every expected claim."""
+    bound: list[CitationCheck] = []
+    for claim in claims:
+        exact = [
+            check
+            for check in checks
+            if check.claim_id == claim.claim_id
+            and check.evidence_id == claim.evidence_id
+            and check.claim_id
+            and check.evidence_id
+            and _source_key(check.source) == _source_key(claim.source)
+            and _claim_key(check.claim) == _claim_key(claim.claim)
+        ]
+        compatible = [
+            check
+            for check in checks
+            if not check.claim_id
+            and not check.evidence_id
+            and _source_key(check.source) == _source_key(claim.source)
+            and _claim_key(check.claim) == _claim_key(claim.claim)
+        ]
+        candidates = [*exact, *compatible]
+        if len(candidates) != 1:
+            reason = (
+                "citation verifier returned conflicting checks"
+                if len(candidates) > 1
+                else "citation verifier omitted or mismatched this evidence binding"
+            )
+            bound.append(
+                CitationCheck(
+                    claim=claim.claim,
+                    source=claim.source,
+                    status="uncertain",
+                    reason=reason,
+                    claim_id=claim.claim_id,
+                    evidence_id=claim.evidence_id,
+                )
+            )
+            continue
+        check = candidates[0]
+        if check.status not in {"supported", "unsupported", "uncertain"}:
+            bound.append(
+                CitationCheck(
+                    claim=claim.claim,
+                    source=claim.source,
+                    status="uncertain",
+                    reason="citation verifier returned an invalid status",
+                    claim_id=claim.claim_id,
+                    evidence_id=claim.evidence_id,
+                )
+            )
+            continue
+        if not check.reason.strip():
+            bound.append(
+                CitationCheck(
+                    claim=claim.claim,
+                    source=claim.source,
+                    status="uncertain",
+                    reason="citation verifier returned no reason",
+                    claim_id=claim.claim_id,
+                    evidence_id=claim.evidence_id,
+                )
+            )
+            continue
+        bound.append(
+            replace(
+                check,
+                claim=claim.claim,
+                source=claim.source,
+                claim_id=claim.claim_id,
+                evidence_id=claim.evidence_id,
+            )
+        )
+    return tuple(bound)
 
 
 def _combine_findings(
@@ -432,12 +669,16 @@ def _combine_findings(
     all_evidence: tuple[Evidence, ...],
     all_conflicts: tuple[EvidenceConflict, ...],
 ) -> tuple[str, tuple[Citation, ...], tuple[ResearchFinding, ...]]:
-    sources_by_url = {source.url: source for source in all_sources}
+    sources_by_key = _source_lookup(all_sources)
     if len(runs) == 1 and runs[0][1] == topic:
         question_id, question, run = runs[0]
-        sources = _canonical_sources(run.sources, sources_by_url)
-        citations = _canonical_citations(run.citations, sources_by_url)
+        sources = _canonical_sources(run.sources, sources_by_key)
         evidence = _for_question(all_evidence, question_id)
+        citations = _bind_citations_to_evidence(
+            run.report,
+            _canonical_citations(run.citations, sources_by_key),
+            evidence,
+        )
         conflicts = _conflicts_for_question(all_conflicts, question_id)
         finding = _finding(
             question_id,
@@ -454,8 +695,13 @@ def _combine_findings(
     citations: list[Citation] = []
     findings: list[ResearchFinding] = []
     for question_id, question, run in runs:
-        sources = _canonical_sources(run.sources, sources_by_url)
-        run_citations = _canonical_citations(run.citations, sources_by_url)
+        sources = _canonical_sources(run.sources, sources_by_key)
+        evidence = _for_question(all_evidence, question_id)
+        run_citations = _bind_citations_to_evidence(
+            run.report,
+            _canonical_citations(run.citations, sources_by_key),
+            evidence,
+        )
         report += f"\n## {question}\n\n"
         offset = len(report)
         report += run.report.rstrip() + "\n"
@@ -464,11 +710,11 @@ def _combine_findings(
                 source=citation.source,
                 start_index=citation.start_index + offset,
                 end_index=citation.end_index + offset,
+                evidence_id=citation.evidence_id,
             )
             for citation in run_citations
         )
         citations.extend(shifted)
-        evidence = _for_question(all_evidence, question_id)
         conflicts = _conflicts_for_question(all_conflicts, question_id)
         findings.append(
             _finding(
@@ -508,30 +754,117 @@ def _finding(
 
 def _canonical_sources(
     sources: tuple[Source, ...],
-    sources_by_url: dict[str, Source],
+    sources_by_key: dict[str, Source],
 ) -> tuple[Source, ...]:
-    return tuple(sources_by_url.get(source.url, source) for source in sources)
+    return tuple(sources_by_key.get(_source_key(source), source) for source in sources)
+
+
+def _ledger_findings(
+    findings: tuple[ResearchFinding, ...],
+    ledger: EvidenceLedger,
+) -> tuple[ResearchFinding, ...]:
+    """Project final ledger state back into the compatibility finding views."""
+    sources_by_key = _source_lookup(ledger.sources)
+    return tuple(
+        replace(
+            finding,
+            sources=_canonical_sources(finding.sources, sources_by_key),
+            citations=_canonical_citations(finding.citations, sources_by_key),
+            evidence=_for_question(ledger.evidence, finding.question_id),
+            conflicts=_conflicts_for_question(ledger.conflicts, finding.question_id),
+        )
+        for finding in findings
+    )
 
 
 def _canonical_citations(
     citations: tuple[Citation, ...],
-    sources_by_url: dict[str, Source],
+    sources_by_key: dict[str, Source],
 ) -> tuple[Citation, ...]:
     normalized: list[Citation] = []
     seen: set[tuple[str, int, int]] = set()
     for citation in citations:
-        key = (citation.source.url, citation.start_index, citation.end_index)
+        source_key = _source_key(citation.source)
+        key = (source_key, citation.start_index, citation.end_index)
         if key in seen:
             continue
         normalized.append(
             Citation(
-                source=sources_by_url.get(citation.source.url, citation.source),
+                source=sources_by_key.get(source_key, citation.source),
                 start_index=citation.start_index,
                 end_index=citation.end_index,
+                evidence_id=citation.evidence_id,
             )
         )
         seen.add(key)
     return tuple(normalized)
+
+
+def _bind_citations_to_evidence(
+    report: str,
+    citations: tuple[Citation, ...],
+    evidence: tuple[Evidence, ...],
+) -> tuple[Citation, ...]:
+    return tuple(
+        replace(
+            citation,
+            evidence_id=_matching_evidence_id(
+                claim=_claim_before(report, citation.start_index),
+                source=citation.source,
+                evidence=evidence,
+            ),
+        )
+        for citation in citations
+    )
+
+
+def _matching_evidence_id(
+    *,
+    claim: str,
+    source: Source,
+    evidence: tuple[Evidence, ...],
+) -> str:
+    candidates = [
+        item for item in evidence if _source_key(item.source) == _source_key(source)
+    ]
+    if not candidates:
+        return ""
+    claim_key = _claim_key(claim)
+    exact = [item for item in candidates if _claim_key(item.claim) == claim_key]
+    if len(exact) == 1:
+        return exact[0].id
+    return ""
+
+
+def _claim_matches_evidence(claim: str, evidence: Evidence) -> bool:
+    claim_key = _claim_key(claim)
+    evidence_key = _claim_key(evidence.claim)
+    return bool(claim_key and claim_key == evidence_key)
+
+
+def _source_key(source: Source) -> str:
+    if source.id:
+        return source.id
+    url = source.canonical_url or source.url
+    return canonicalize_url(url) if url else ""
+
+
+def _source_lookup(sources: tuple[Source, ...]) -> dict[str, Source]:
+    lookup: dict[str, Source] = {}
+    for source in sources:
+        keys = (
+            source.id,
+            canonicalize_url(source.canonical_url) if source.canonical_url else "",
+            canonicalize_url(source.url) if source.url else "",
+        )
+        for key in keys:
+            if key:
+                lookup.setdefault(key, source)
+    return lookup
+
+
+def _claim_key(claim: str) -> str:
+    return re.sub(r"\s+", " ", claim).strip().rstrip(".!?。！？").casefold()
 
 
 def _for_question(
@@ -564,6 +897,9 @@ def _quality_status(
     evidence: tuple[Evidence, ...],
     sources: tuple[object, ...],
     citations: tuple[Citation, ...],
+    *,
+    has_unbound_markers: bool = False,
+    has_unbound_citations: bool = False,
 ) -> tuple[str, str]:
     if provider_status != "completed":
         return provider_status, provider_stop_reason
@@ -571,6 +907,8 @@ def _quality_status(
         return "needs_review", "empty_report"
     if len(sources) < request.min_sources:
         return "needs_review", "insufficient_sources"
+    if request.require_citations and (has_unbound_markers or has_unbound_citations):
+        return "needs_review", "unbound_citations"
     if request.require_citations and (not evidence or not citations):
         return "needs_review", "missing_citations"
     return "completed", "completed"

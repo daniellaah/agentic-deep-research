@@ -4,9 +4,9 @@ Agentic Deep Research is a Python project for building a reliable deep research 
 
 The current engine uses the OpenAI Responses API inside a small, explicit agent harness. An adaptive planner creates research questions, a deterministic supervisor enforces global limits, independent workers investigate questions in bounded parallel batches, and an evidence store carries only compact citation-linked context between batches. A writer then synthesizes a report from controlled source markers, while a critic and citation verifier drive bounded gap-search and revision rounds. A durable runtime checkpoints every provider-facing operation so an interrupted run can resume without repeating work that was already saved.
 
-The result contains the research plan, cited findings, normalized evidence, reported conflicts, draft and revision artifacts, citation-support judgments, observable control and web actions, stop reason, and token usage. Private model reasoning is never stored.
+The result contains the research plan, cited findings, a versioned evidence ledger, reported conflicts, draft and revision artifacts, citation-support judgments, observable control and web actions, stop reason, and token usage. Private model reasoning is never stored.
 
-Evidence confidence and source quality are lightweight harness signals: matching claims from distinct URLs are treated as corroborated, and selected institutional domains receive a primary-source hint. They do not prove that a citation supports a claim. The separate citation verifier reopens paired source URLs and returns a semantic `supported`, `unsupported`, or `uncertain` judgment.
+Every canonical source and evidence record receives a stable ID. Tracking parameters and URL fragments are removed before source deduplication; evidence retains its research-question and artifact provenance. Matching claims from distinct sources are treated as corroborated, but a domain name never proves source quality. Citation-derived evidence also does not pretend that a generated claim is a verbatim source excerpt. The separate citation verifier reopens paired source URLs and returns a semantic `supported`, `unsupported`, or `uncertain` judgment.
 
 ## Architecture
 
@@ -18,9 +18,9 @@ ResearchRequest
   -> Adaptive Planner
   -> Supervisor (budget, scheduling, stop conditions, replanning)
   -> Independent Research Workers (Responses API + web_search)
-  -> Evidence Store (deduplication, source quality, confidence, conflicts)
+  -> Evidence Ledger (stable identity, provenance, deduplication, conflicts)
   -> Bounded Context Builder
-  -> Report Writer (controlled [S1], [S2], ... source markers)
+  -> Report Writer (evidence-bound [E1], [E2], ... markers)
   -> Critic + Citation Verifier
   -> Gap Search + Reviser (bounded quality loop)
   -> Cited ResearchResult + quality metadata + full artifacts
@@ -163,6 +163,7 @@ if result is not None:
     print(result.report)
     print(result.plan)
     print(result.evidence)
+    print(result.ledger)
     print(result.sources)
     print(result.citation_checks)
     print(result.revision_count)

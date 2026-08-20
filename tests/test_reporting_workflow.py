@@ -54,6 +54,52 @@ class WriterOnlyAgent:
         )
 
 
+class EvidenceMarkerAgent(WriterOnlyAgent):
+    def write(self, **_: object) -> ReportDraft:
+        return ReportDraft(
+            report="# Reliable agents\n\nEvaluation improves reliability [E1].",
+            usage=TokenUsage(total_tokens=7),
+        )
+
+
+class MixedBoundAndForgedEvidenceMarkerAgent(WriterOnlyAgent):
+    def write(self, **_: object) -> ReportDraft:
+        return ReportDraft(
+            report=(
+                "# Reliable agents\n\nEvaluation improves reliability [E1]. "
+                "A fabricated ledger entry makes another claim [E999]."
+            ),
+            usage=TokenUsage(total_tokens=7),
+        )
+
+
+class MisusedEvidenceMarkerAgent(WriterOnlyAgent):
+    def write(self, **_: object) -> ReportDraft:
+        return ReportDraft(
+            report="# Reliable agents\n\nThe moon is made of cheese [E1].",
+            usage=TokenUsage(total_tokens=7),
+        )
+
+
+class MalformedEvidenceMarkerAgent(WriterOnlyAgent):
+    def write(self, **_: object) -> ReportDraft:
+        return ReportDraft(
+            report=(
+                "# Reliable agents\n\nEvaluation improves reliability [E1]. "
+                "Malformed markers [Ebogus] and [E01] are not catalog entries."
+            ),
+            usage=TokenUsage(total_tokens=7),
+        )
+
+
+class UnboundLegacySourceAgent(WriterOnlyAgent):
+    def write(self, **_: object) -> ReportDraft:
+        return ReportDraft(
+            report="# Reliable agents\n\nAn uncited source makes this claim [S1].",
+            usage=TokenUsage(total_tokens=7),
+        )
+
+
 class GapCriticAgent(WriterOnlyAgent):
     def critique(self, **_: object) -> ReportCritique:
         return ReportCritique(
@@ -91,6 +137,23 @@ class UnsupportedCitationAgent(WriterOnlyAgent):
         )
 
 
+class WrongBindingCitationAgent(WriterOnlyAgent):
+    def verify(self, **kwargs: object) -> CitationVerification:
+        claim = kwargs["claims"][0]
+        return CitationVerification(
+            checks=(
+                CitationCheck(
+                    claim=claim.claim,
+                    source=Source("Wrong source", "https://example.com/wrong"),
+                    status="supported",
+                    reason="This result must not be rebound by position.",
+                    claim_id="C999",
+                    evidence_id="ev_wrong",
+                ),
+            )
+        )
+
+
 class GapRevisionAgent(WriterOnlyAgent):
     def __init__(self) -> None:
         self.critique_calls = 0
@@ -109,8 +172,8 @@ class GapRevisionAgent(WriterOnlyAgent):
     def revise(self, **_: object) -> ReportDraft:
         return ReportDraft(
             report=(
-                "# Reliable agents\n\nEvaluation improves reliability [S1]. "
-                "A benchmark measures the gain [S2]."
+                "# Reliable agents\n\nEvaluation improves reliability [E1]. "
+                "A benchmark measures reliability gains [E2]."
             ),
             usage=TokenUsage(total_tokens=8),
         )
@@ -168,6 +231,45 @@ def _gap_run() -> AgentRun:
     )
 
 
+def _run_with_an_unbound_first_source() -> AgentRun:
+    unbound_source = Source("Overview", "https://example.com/overview")
+    cited_source = Source("Evaluation study", "https://example.com/evaluation")
+    report = "Evaluation improves reliability. [1]"
+    start = report.index("[1]")
+    return AgentRun(
+        report=report,
+        sources=(unbound_source, cited_source),
+        citations=(Citation(cited_source, start, start + 3),),
+        usage=TokenUsage(total_tokens=15),
+    )
+
+
+def _run_with_a_canonical_source_alias() -> AgentRun:
+    source = Source("Evaluation study", "https://example.com/evaluation")
+    alias = Source(
+        "Tracked evaluation link",
+        "https://EXAMPLE.com/evaluation?utm_source=newsletter#result",
+    )
+    report = "Evaluation improves reliability. [1]"
+    start = report.index("[1]")
+    return AgentRun(
+        report=report,
+        sources=(source,),
+        citations=(Citation(alias, start, start + 3),),
+    )
+
+
+def _run_with_a_forged_evidence_id() -> AgentRun:
+    source = Source("Evaluation study", "https://example.com/evaluation")
+    report = "Evaluation improves reliability. [1]"
+    start = report.index("[1]")
+    return AgentRun(
+        report=report,
+        sources=(source,),
+        citations=(Citation(source, start, start + 3, evidence_id="ev_forged"),),
+    )
+
+
 def test_writer_synthesizes_findings_with_controlled_source_markers() -> None:
     result = run_research(
         ResearchRequest(topic="Reliable agents", min_sources=1),
@@ -182,9 +284,81 @@ def test_writer_synthesizes_findings_with_controlled_source_markers() -> None:
     )
     assert len(result.citations) == 1
     assert result.citations[0].source == result.sources[0]
+    assert result.ledger is not None
+    assert result.citations[0].evidence_id == result.ledger.evidence[0].id
+    assert result.citation_checks[0].evidence_id == result.citations[0].evidence_id
+    assert result.citation_checks == result.ledger.checks
+    assert result.evidence[0].verification_status == "supported"
+    assert result.findings[0].evidence[0].verification_status == "supported"
     assert result.usage.total_tokens == 29
     assert result.artifacts[-1].kind == "report_draft"
     assert any(step.action == "report_written" for step in result.trace)
+
+
+def test_writer_can_cite_evidence_ledger_markers() -> None:
+    result = run_research(
+        ResearchRequest(topic="Reliable agents", min_sources=1),
+        runner=SingleRunRunner(_cited_run()),
+        report_agent=EvidenceMarkerAgent(),
+    )
+
+    assert result.raw_report.endswith("[E1].")
+    assert result.ledger is not None
+    assert result.citations[0].evidence_id == result.ledger.evidence[0].id
+    assert result.citations[0].source == result.ledger.evidence[0].source
+    assert "[Evaluation study](https://example.com/evaluation)" in result.report
+
+
+def test_unbound_legacy_source_marker_requires_review() -> None:
+    result = run_research(
+        ResearchRequest(topic="Reliable agents", min_sources=2),
+        runner=SingleRunRunner(_run_with_an_unbound_first_source()),
+        report_agent=UnboundLegacySourceAgent(),
+    )
+
+    assert len(result.citations) == 1
+    assert result.citations[0].evidence_id == ""
+    assert result.status == "needs_review"
+    assert result.stop_reason == "unbound_citations"
+
+
+def test_forged_evidence_marker_cannot_hide_beside_a_valid_marker() -> None:
+    result = run_research(
+        ResearchRequest(topic="Reliable agents", min_sources=1),
+        runner=SingleRunRunner(_cited_run()),
+        report_agent=MixedBoundAndForgedEvidenceMarkerAgent(),
+    )
+
+    assert len(result.citations) == 1
+    assert result.citations[0].evidence_id
+    assert result.status == "needs_review"
+    assert result.stop_reason == "unbound_citations"
+
+
+def test_evidence_marker_cannot_be_moved_to_an_unrelated_claim() -> None:
+    result = run_research(
+        ResearchRequest(topic="Reliable agents", min_sources=1),
+        runner=SingleRunRunner(_cited_run()),
+        report_agent=MisusedEvidenceMarkerAgent(),
+    )
+
+    assert len(result.citations) == 1
+    assert result.citations[0].evidence_id == ""
+    assert result.status == "needs_review"
+    assert result.stop_reason == "unbound_citations"
+    assert result.evidence[0].verification_status == "unverified"
+
+
+def test_malformed_evidence_markers_fail_closed() -> None:
+    result = run_research(
+        ResearchRequest(topic="Reliable agents", min_sources=1),
+        runner=SingleRunRunner(_cited_run()),
+        report_agent=MalformedEvidenceMarkerAgent(),
+    )
+
+    assert len(result.citations) == 1
+    assert result.status == "needs_review"
+    assert result.stop_reason == "unbound_citations"
 
 
 def test_critic_exposes_report_quality_gaps() -> None:
@@ -226,6 +400,49 @@ def test_citation_verifier_rejects_an_unsupported_claim_source_pair() -> None:
     assert any(step.action == "citations_verified" for step in result.trace)
 
 
+def test_citation_verifier_cannot_rebind_a_wrong_id_by_position() -> None:
+    result = run_research(
+        ResearchRequest(
+            topic="Reliable agents",
+            min_sources=1,
+            budget=ResearchBudget(max_revision_rounds=0),
+        ),
+        runner=SingleRunRunner(_cited_run()),
+        report_agent=WrongBindingCitationAgent(),
+    )
+
+    assert len(result.citation_checks) == 1
+    assert result.citation_checks[0].status == "uncertain"
+    assert result.citation_checks[0].claim_id == "C1"
+    assert result.citation_checks[0].evidence_id == result.citations[0].evidence_id
+    assert result.status == "needs_review"
+    assert result.stop_reason == "unverified_citations"
+
+
+def test_fallback_report_binds_canonical_source_aliases() -> None:
+    result = run_research(
+        ResearchRequest(topic="Reliable agents", min_sources=1),
+        runner=SingleRunRunner(_run_with_a_canonical_source_alias()),
+    )
+
+    assert result.status == "completed"
+    assert result.citations[0].evidence_id
+    assert result.citations[0].source == result.sources[0]
+    assert "utm_source" not in result.citations[0].source.url
+
+
+def test_fallback_report_replaces_a_runner_supplied_forged_evidence_id() -> None:
+    result = run_research(
+        ResearchRequest(topic="Reliable agents", min_sources=1),
+        runner=SingleRunRunner(_run_with_a_forged_evidence_id()),
+    )
+
+    assert result.status == "completed"
+    assert result.ledger is not None
+    assert result.citations[0].evidence_id == result.ledger.evidence[0].id
+    assert result.citations[0].evidence_id != "ev_forged"
+
+
 def test_gap_search_adds_evidence_and_reviser_completes_the_report() -> None:
     agent = GapRevisionAgent()
     runner = MappingRunner(
@@ -253,6 +470,15 @@ def test_gap_search_adds_evidence_and_reviser_completes_the_report() -> None:
     assert result.revision_count == 1
     assert len(result.findings) == 2
     assert len(result.sources) == 2
+    assert result.ledger is not None
+    assert len({item.id for item in result.ledger.evidence}) == 2
+    assert [item.evidence_id for item in result.citations] == [
+        item.id for item in result.ledger.evidence
+    ]
+    assert result.sources == result.ledger.sources
+    assert result.evidence == result.ledger.evidence
+    assert result.conflicts == result.ledger.conflicts
+    assert result.citation_checks == result.ledger.checks
     assert "https://example.com/benchmark" in result.report
     assert result.status == "completed"
     assert result.stop_reason == "completed"
