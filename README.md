@@ -2,7 +2,7 @@
 
 Agentic Deep Research is a Python project for building a reliable deep research agent with testable workflows and clear model and tool boundaries.
 
-The current engine uses the OpenAI Responses API inside a small, explicit agent harness. An adaptive planner creates research questions, a deterministic supervisor enforces global limits, independent workers investigate questions in bounded parallel batches, and an evidence store carries only compact citation-linked context between batches. A writer then synthesizes a report from controlled source markers, while a critic and citation verifier drive bounded gap-search and revision rounds.
+The current engine uses the OpenAI Responses API inside a small, explicit agent harness. An adaptive planner creates research questions, a deterministic supervisor enforces global limits, independent workers investigate questions in bounded parallel batches, and an evidence store carries only compact citation-linked context between batches. A writer then synthesizes a report from controlled source markers, while a critic and citation verifier drive bounded gap-search and revision rounds. A durable runtime checkpoints every provider-facing operation so an interrupted run can resume without repeating work that was already saved.
 
 The result contains the research plan, cited findings, normalized evidence, reported conflicts, draft and revision artifacts, citation-support judgments, observable control and web actions, stop reason, and token usage. Private model reasoning is never stored.
 
@@ -14,6 +14,7 @@ The core flow is:
 
 ```text
 ResearchRequest
+  -> Durable Runtime (checkpoint, retry, approval, cancellation)
   -> Adaptive Planner
   -> Supervisor (budget, scheduling, stop conditions, replanning)
   -> Independent Research Workers (Responses API + web_search)
@@ -69,6 +70,35 @@ Research a topic with a global limit of eight research web-tool calls, at most f
 uv run deep-research "What makes a research agent reliable?"
 ```
 
+The command prints a generated `run_id` and saves its checkpoint in `.research-runs/checkpoints.sqlite3`. Give an important run a stable ID and require plan approval before the first web-research call:
+
+```bash
+uv run deep-research \
+  "What makes a research agent reliable?" \
+  --run-id reliability-study \
+  --require-approval
+
+uv run deep-research --approve reliability-study
+```
+
+Resume a failed run, reject a pending plan, or request cooperative cancellation:
+
+```bash
+uv run deep-research --resume reliability-study
+uv run deep-research --reject reliability-study --reason "Plan is too broad"
+uv run deep-research --cancel reliability-study --reason "No longer needed"
+```
+
+Completed planner, worker, writer, critic, verifier, and reviser calls are replayed from the checkpoint instead of being sent again. Transient connection, timeout, rate-limit, and server failures receive bounded exponential-backoff retries. An execution lease and heartbeat prevent two local processes from resuming the same run concurrently. Cancellation cannot forcibly abort an HTTP request already in flight; it saves that response and prevents the next external operation from starting.
+
+There is one unavoidable exactly-once boundary: if a process stops after the provider accepted or completed a request but before the completed effect was committed, the checkpoint contains `started` and the outcome is ambiguous. Resume pauses by default instead of silently paying for a duplicate call. Only after confirming that the original process has stopped should you run:
+
+```bash
+uv run deep-research --resume reliability-study --retry-ambiguous
+```
+
+That explicit retry can repeat the provider call. A lease left by a force-killed process expires automatically; a normally exiting process releases it immediately.
+
 Choose the report language and inspect the observable search trace:
 
 ```bash
@@ -90,14 +120,21 @@ The planner chooses the highest-value subquestions. The supervisor decides what 
 The same workflow is available from Python:
 
 ```python
+from pathlib import Path
+
 from openai import OpenAI
 
-from agentic_deep_research import ResearchBudget, ResearchRequest, run_research
+from agentic_deep_research import (
+    ResearchBudget,
+    ResearchRequest,
+    ResearchRuntime,
+    SQLiteCheckpointStore,
+)
 from agentic_deep_research.planning import OpenAIAdaptivePlanner
 from agentic_deep_research.reporting import OpenAIReportAgent
 from agentic_deep_research.runner import OpenAIAgentRunner
 
-client = OpenAI()
+client = OpenAI(max_retries=0)
 runner = OpenAIAgentRunner(client=client, model="your-model")
 planner = OpenAIAdaptivePlanner(client=client, model="your-model")
 report_agent = OpenAIReportAgent(client=client, model="your-model")
@@ -113,21 +150,28 @@ request = ResearchRequest(
         max_revision_rounds=2,
     ),
 )
-result = run_research(
-    request,
+runtime = ResearchRuntime(
+    store=SQLiteCheckpointStore(Path(".research-runs/checkpoints.sqlite3")),
     runner=runner,
     planner=planner,
     report_agent=report_agent,
 )
+outcome = runtime.start(request, run_id="reliability-study")
+result = outcome.result
 
-print(result.report)
-print(result.plan)
-print(result.evidence)
-print(result.sources)
-print(result.citation_checks)
-print(result.revision_count)
-print(result.trace)
+if result is not None:
+    print(result.report)
+    print(result.plan)
+    print(result.evidence)
+    print(result.sources)
+    print(result.citation_checks)
+    print(result.revision_count)
+    print(result.trace)
 ```
+
+`OpenAI(max_retries=0)` is intentional here: the durable runtime owns and records retries, avoiding a hidden SDK retry layer. The lower-level `run_research(...)` function remains available for short, stateless calls that do not need persistence or operational controls.
+
+Checkpoints contain the complete report, evidence, source URLs, traces, and error messages. Treat the SQLite file as potentially sensitive application data. The local store creates it with owner-only file permissions, and `.gitignore` prevents accidental repository commits; deployment still needs normal backup, access-control, and retention policies.
 
 Web search requests consume API tokens and built-in tool calls. Unit tests use fake responses and do not make paid API calls.
 
