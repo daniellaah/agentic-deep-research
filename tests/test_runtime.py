@@ -1,5 +1,7 @@
 import json
-from threading import Event, Thread
+from threading import Barrier, Event, Thread
+
+import pytest
 
 from agentic_deep_research import (
     AgentRun,
@@ -16,6 +18,7 @@ from agentic_deep_research.runtime import (
     ResearchRuntime,
     RetryPolicy,
     RunState,
+    SQLiteCheckpointStore,
 )
 
 
@@ -55,7 +58,7 @@ class CrashOnceRunner:
         self.calls[question] += 1
         if question == "Second question" and not self._crashed:
             self._crashed = True
-            raise ConnectionError("temporary provider disconnect")
+            raise RuntimeError("adapter failed after the first completed effect")
         source = Source(question, f"https://example.com/{question.split()[0].lower()}")
         report = f"{question} answer. [1]"
         marker_start = report.index("[1]")
@@ -110,12 +113,10 @@ def test_resume_reuses_completed_effects_after_a_process_failure(tmp_path) -> No
         ),
     )
 
-    no_automatic_retry = RetryPolicy(max_attempts=1)
     first_runtime = ResearchRuntime(
         store=store,
         planner=planner,
         runner=runner,
-        retry_policy=no_automatic_retry,
     )
     failed = first_runtime.start(request, run_id="run-resume")
 
@@ -126,7 +127,6 @@ def test_resume_reuses_completed_effects_after_a_process_failure(tmp_path) -> No
         store=store,
         planner=planner,
         runner=runner,
-        retry_policy=no_automatic_retry,
     )
     resumed = restarted_runtime.resume("run-resume")
 
@@ -138,7 +138,7 @@ def test_resume_reuses_completed_effects_after_a_process_failure(tmp_path) -> No
 
 
 class TransientRunner:
-    def __init__(self, error: Exception) -> None:
+    def __init__(self, error: BaseException) -> None:
         self._error = error
         self.call_count = 0
 
@@ -215,6 +215,91 @@ def test_runtime_does_not_retry_a_programming_error(tmp_path) -> None:
     assert runner.call_count == 1
     assert delays == []
     assert outcome.state.effects[0].attempts == 1
+
+
+class AlwaysFailingRunner:
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    def run(
+        self,
+        *,
+        instructions: str,
+        task: str,
+        budget: ResearchBudget,
+    ) -> AgentRun:
+        del instructions, task, budget
+        self.call_count += 1
+        raise ConnectionError("provider remains unavailable")
+
+
+def test_resume_cannot_bypass_the_total_retry_limit(tmp_path) -> None:
+    runner = AlwaysFailingRunner()
+    store = JsonCheckpointStore(tmp_path)
+    runtime = ResearchRuntime(
+        store=store,
+        runner=runner,
+        retry_policy=RetryPolicy(max_attempts=2, initial_delay_seconds=0),
+        sleeper=lambda _: None,
+    )
+
+    failed = runtime.start(
+        ResearchRequest(topic="Bound total retries"),
+        run_id="run-retry-limit",
+    )
+    resumed = runtime.resume("run-retry-limit")
+
+    assert failed.state.status == "failed"
+    assert resumed.state.status == "failed"
+    assert runner.call_count == 2
+    assert resumed.state.effects[0].attempts == 2
+
+
+def test_resume_rejects_a_different_model_configuration(tmp_path) -> None:
+    runner = TransientRunner(ValueError("stop before completion"))
+    runner._model = "model-a"
+    store = JsonCheckpointStore(tmp_path)
+    runtime = ResearchRuntime(store=store, runner=runner)
+    runtime.start(
+        ResearchRequest(topic="Keep one runtime configuration"),
+        run_id="run-config",
+    )
+    runner._model = "model-b"
+
+    with pytest.raises(ValueError, match="configuration does not match"):
+        runtime.resume("run-config")
+
+    assert runner.call_count == 1
+
+
+class SimulatedProcessCrash(BaseException):
+    pass
+
+
+def test_ambiguous_in_flight_effect_requires_explicit_retry(tmp_path) -> None:
+    runner = TransientRunner(SimulatedProcessCrash("process stopped after request"))
+    store = JsonCheckpointStore(tmp_path)
+    runtime = ResearchRuntime(store=store, runner=runner)
+    request = ResearchRequest(
+        topic="Do not silently duplicate an ambiguous request",
+        min_sources=1,
+        budget=ResearchBudget(max_tool_calls=1, max_research_steps=1),
+    )
+
+    with pytest.raises(SimulatedProcessCrash):
+        runtime.start(request, run_id="run-ambiguous")
+
+    restarted = ResearchRuntime(store=store, runner=runner)
+    waiting = restarted.resume("run-ambiguous")
+
+    assert waiting.state.status == "waiting_for_human"
+    assert waiting.state.current_step == "ambiguous_effect"
+    assert runner.call_count == 1
+
+    completed = restarted.resume("run-ambiguous", retry_ambiguous=True)
+
+    assert completed.state.status == "completed"
+    assert runner.call_count == 2
 
 
 class RecordingRunner:
@@ -309,8 +394,9 @@ def test_cancel_during_an_external_call_stops_before_the_next_effect(tmp_path) -
     release = Event()
     planner = TwoQuestionPlanner()
     runner = RecordingRunner(entered=entered, release=release)
+    database = tmp_path / "runs.sqlite3"
     runtime = ResearchRuntime(
-        store=JsonCheckpointStore(tmp_path),
+        store=SQLiteCheckpointStore(database),
         planner=planner,
         runner=runner,
         retry_policy=RetryPolicy(max_attempts=1),
@@ -335,7 +421,11 @@ def test_cancel_during_an_external_call_stops_before_the_next_effect(tmp_path) -
     thread.start()
     assert entered.wait(timeout=2)
 
-    requested = runtime.request_cancel("run-cancel", reason="User stopped the run")
+    control_runtime = ResearchRuntime(store=SQLiteCheckpointStore(database))
+    requested = control_runtime.request_cancel(
+        "run-cancel",
+        reason="User stopped the run",
+    )
     release.set()
     thread.join(timeout=2)
 
@@ -349,3 +439,181 @@ def test_cancel_during_an_external_call_stops_before_the_next_effect(tmp_path) -
     ]
     assert len(runner_effects) == 1
     assert runner_effects[0].status == "completed"
+
+
+def test_execution_lease_prevents_two_runtimes_from_resuming_the_same_run(
+    tmp_path,
+) -> None:
+    entered = Event()
+    release = Event()
+    database = tmp_path / "leased-runs.sqlite3"
+    runner = RecordingRunner(entered=entered, release=release)
+    runtime = ResearchRuntime(
+        store=SQLiteCheckpointStore(database),
+        runner=runner,
+    )
+    outcomes = []
+    thread = Thread(
+        target=lambda: outcomes.append(
+            runtime.start(
+                ResearchRequest(
+                    topic="First question",
+                    min_sources=1,
+                    budget=ResearchBudget(max_tool_calls=1, max_research_steps=1),
+                ),
+                run_id="run-leased",
+            )
+        )
+    )
+    thread.start()
+    assert entered.wait(timeout=2)
+
+    competing_runtime = ResearchRuntime(
+        store=SQLiteCheckpointStore(database),
+        runner=runner,
+    )
+    with pytest.raises(RuntimeError, match="already executing"):
+        competing_runtime.resume("run-leased")
+
+    release.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert outcomes[0].state.status == "completed"
+    assert runner.calls == ["First question"]
+
+
+def test_lease_heartbeat_protects_a_long_external_call(tmp_path) -> None:
+    entered = Event()
+    release = Event()
+    database = tmp_path / "heartbeat-runs.sqlite3"
+    runner = RecordingRunner(entered=entered, release=release)
+    runtime = ResearchRuntime(
+        store=SQLiteCheckpointStore(database),
+        runner=runner,
+        lease_ttl_seconds=0.12,
+    )
+    outcomes = []
+    thread = Thread(
+        target=lambda: outcomes.append(
+            runtime.start(
+                ResearchRequest(
+                    topic="First question",
+                    min_sources=1,
+                    budget=ResearchBudget(max_tool_calls=1, max_research_steps=1),
+                ),
+                run_id="run-heartbeat",
+            )
+        )
+    )
+    thread.start()
+    assert entered.wait(timeout=2)
+    assert Event().wait(timeout=0.25) is False
+
+    competing_runtime = ResearchRuntime(
+        store=SQLiteCheckpointStore(database),
+        runner=runner,
+    )
+    with pytest.raises(RuntimeError, match="already executing"):
+        competing_runtime.resume("run-heartbeat")
+
+    release.set()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert outcomes[0].state.status == "completed"
+
+
+class ParallelRunner(RecordingRunner):
+    def __init__(self) -> None:
+        super().__init__()
+        self._barrier = Barrier(2)
+
+    def run(
+        self,
+        *,
+        instructions: str,
+        task: str,
+        budget: ResearchBudget,
+    ) -> AgentRun:
+        del instructions, budget
+        question = next(
+            item
+            for item in ("First question", "Second question")
+            if f"Research question:\n{item}" in task
+        )
+        self.calls.append(question)
+        self._barrier.wait(timeout=2)
+        source = Source(question, f"https://example.com/{question.split()[0].lower()}")
+        report = f"{question} answer. [1]"
+        marker_start = report.index("[1]")
+        return AgentRun(
+            report=report,
+            sources=(source,),
+            citations=(Citation(source, marker_start, marker_start + 3),),
+        )
+
+
+def test_parallel_workers_preserve_each_completed_effect(tmp_path) -> None:
+    database = tmp_path / "parallel-runs.sqlite3"
+    runner = ParallelRunner()
+    runtime = ResearchRuntime(
+        store=SQLiteCheckpointStore(database),
+        planner=TwoQuestionPlanner(),
+        runner=runner,
+    )
+
+    outcome = runtime.start(
+        ResearchRequest(
+            topic="Parallel durable research",
+            min_sources=2,
+            budget=ResearchBudget(
+                max_tool_calls=4,
+                max_research_steps=3,
+                max_parallel_workers=2,
+            ),
+        ),
+        run_id="run-parallel",
+    )
+
+    runner_effects = [
+        effect for effect in outcome.state.effects if effect.kind == "runner.run"
+    ]
+    assert outcome.state.status == "completed"
+    assert sorted(runner.calls) == ["First question", "Second question"]
+    assert len(runner_effects) == 2
+    assert all(effect.status == "completed" for effect in runner_effects)
+
+    restored = runtime.resume("run-parallel")
+    assert restored.result == outcome.result
+    assert len(runner.calls) == 2
+
+
+class CancelBeforeStartingStore(SQLiteCheckpointStore):
+    def __init__(self, path) -> None:
+        super().__init__(path)
+        self.owned_updates = 0
+
+    def update_owned(self, run_id, owner_id, ttl_seconds, mutation):
+        self.owned_updates += 1
+        if self.owned_updates == 2:
+            ResearchRuntime(store=self).request_cancel(
+                run_id,
+                reason="Cancelled before workflow start",
+            )
+        return super().update_owned(run_id, owner_id, ttl_seconds, mutation)
+
+
+def test_cancelled_state_never_transitions_back_to_running(tmp_path) -> None:
+    runner = RecordingRunner()
+    runtime = ResearchRuntime(
+        store=CancelBeforeStartingStore(tmp_path / "terminal-state.sqlite3"),
+        runner=runner,
+    )
+
+    outcome = runtime.start(
+        ResearchRequest(topic="First question"),
+        run_id="run-terminal",
+    )
+
+    assert outcome.state.status == "cancelled"
+    assert outcome.state.termination_reason == "Cancelled before workflow start"
+    assert runner.calls == []

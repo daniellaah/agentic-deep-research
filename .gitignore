@@ -10,4 +10,5 @@ venv/
 data/raw/
 artifacts/
 .benchmarks/
+.research-runs/
 runs/
