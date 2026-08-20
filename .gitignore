@@ -9,3 +9,5 @@ venv/
 .ruff_cache/
 data/raw/
 artifacts/
+.benchmarks/
+runs/

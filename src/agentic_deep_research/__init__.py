@@ -1,6 +1,49 @@
 """Public interface for the Agentic Deep Research package."""
 
-from .models import ResearchResult
+from .models import (
+    AgentRun,
+    Citation,
+    CitationCheck,
+    CitationClaim,
+    CitationVerification,
+    Evidence,
+    EvidenceConflict,
+    PlanningRun,
+    ReportCritique,
+    ReportDraft,
+    ResearchArtifact,
+    ResearchBudget,
+    ResearchFinding,
+    ResearchPlan,
+    ResearchQuestion,
+    ResearchRequest,
+    ResearchResult,
+    ResearchStep,
+    Source,
+    TokenUsage,
+)
 from .workflow import run_research
 
-__all__ = ["ResearchResult", "run_research"]
+__all__ = [
+    "AgentRun",
+    "Citation",
+    "CitationCheck",
+    "CitationClaim",
+    "CitationVerification",
+    "Evidence",
+    "EvidenceConflict",
+    "PlanningRun",
+    "ReportCritique",
+    "ReportDraft",
+    "ResearchArtifact",
+    "ResearchBudget",
+    "ResearchFinding",
+    "ResearchPlan",
+    "ResearchQuestion",
+    "ResearchRequest",
+    "ResearchResult",
+    "ResearchStep",
+    "Source",
+    "TokenUsage",
+    "run_research",
+]

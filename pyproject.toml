@@ -5,21 +5,25 @@ description = "A product-grade deep research agent built step by step in Python"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "ipykernel>=6.29,<7",
-    "jupyterlab>=4.4,<5",
     "openai>=1.0,<3",
-    "pydantic>=2,<3",
     "python-dotenv>=1.1,<2",
-    "requests>=2.32,<3",
-    "tavily-python>=0.7.27",
 ]
+
+[project.scripts]
+deep-research = "agentic_deep_research.cli:main"
+deep-research-eval = "agentic_deep_research.benchmark_cli:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [dependency-groups]
+benchmark = [
+    "datasets>=4,<5",
+]
 dev = [
+    "ipykernel>=6.29,<7",
+    "jupyterlab>=4.4,<5",
     "pytest>=8,<10",
     "ruff>=0.12,<1",
 ]
