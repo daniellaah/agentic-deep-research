@@ -10,8 +10,8 @@ permissions:
   contents: read
 
 jobs:
-  quality:
-    name: Tests and lint
+  backend:
+    name: Backend checks
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -32,8 +32,45 @@ jobs:
       - name: Install dependencies
         run: uv sync --locked --dev
 
-      - name: Run tests
-        run: uv run --locked pytest -q
-
-      - name: Run lint
+      - name: Lint
         run: uv run --locked ruff check src tests
+
+      - name: Type check
+        run: uv run --locked mypy src
+
+      - name: Test
+        run: uv run --locked pytest
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version-file: .node-version
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+        working-directory: web
+
+      - name: Check
+        run: npm run check
+        working-directory: web
+
+      - name: Test
+        run: npm run test
+        working-directory: web
+
+      - name: Build
+        run: npm run build
+        working-directory: web
