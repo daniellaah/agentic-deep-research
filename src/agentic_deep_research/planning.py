@@ -99,6 +99,11 @@ class OpenAIAdaptivePlanner:
             text={"format": _plan_format(max_questions)},
             max_output_tokens=self._max_output_tokens,
         )
+        status = getattr(response, "status", "completed") or "completed"
+        incomplete_details = getattr(response, "incomplete_details", None)
+        stop_reason = getattr(incomplete_details, "reason", None) or status
+        if status != "completed":
+            raise RuntimeError(f"planner response {status}: {stop_reason}")
         if not response.output_text.strip():
             raise ValueError("planner returned no structured output")
         data = json.loads(response.output_text)
@@ -115,9 +120,6 @@ class OpenAIAdaptivePlanner:
         if not questions:
             raise ValueError("planner returned no research questions")
 
-        status = getattr(response, "status", "completed") or "completed"
-        incomplete_details = getattr(response, "incomplete_details", None)
-        stop_reason = getattr(incomplete_details, "reason", None) or status
         usage = getattr(response, "usage", None)
         return PlanningRun(
             plan=ResearchPlan(

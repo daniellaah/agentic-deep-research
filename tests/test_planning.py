@@ -1,6 +1,8 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 from agentic_deep_research import ResearchRequest
 from agentic_deep_research.planning import OpenAIAdaptivePlanner
 
@@ -43,3 +45,26 @@ def test_openai_planner_returns_structured_prioritized_questions() -> None:
     assert call["text"]["format"]["schema"]["properties"]["questions"]["maxItems"] == 2
     assert "Prior evidence: evaluation matters." in call["input"]
     assert "What is an agent?" in call["input"]
+
+
+def test_openai_planner_reports_an_incomplete_structured_response() -> None:
+    client = Mock()
+    client.responses.create.return_value = SimpleNamespace(
+        output_text='{"objective":"Incomplete plan",',
+        status="incomplete",
+        incomplete_details=SimpleNamespace(reason="max_output_tokens"),
+        usage=SimpleNamespace(input_tokens=20, output_tokens=5, total_tokens=25),
+    )
+    planner = OpenAIAdaptivePlanner(client=client, model="planner-model")
+
+    with pytest.raises(
+        RuntimeError,
+        match="planner response incomplete: max_output_tokens",
+    ):
+        planner.plan(
+            request=ResearchRequest(topic="Reliable research agents"),
+            context="",
+            completed_questions=(),
+            max_questions=2,
+            revision=0,
+        )

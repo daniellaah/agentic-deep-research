@@ -55,9 +55,6 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         limit=args.limit,
     )
     client = OpenAI()
-    runner = OpenAIAgentRunner(client=client, model=model)
-    planner = OpenAIAdaptivePlanner(client=client, model=model)
-    report_agent = OpenAIReportAgent(client=client, model=model)
     budget = ResearchBudget(
         max_tool_calls=args.max_tool_calls,
         max_output_tokens=args.max_output_tokens,
@@ -66,6 +63,17 @@ def _run(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
         max_context_chars=args.max_context_chars,
         max_verification_tool_calls=args.max_verification_tool_calls,
         max_revision_rounds=args.max_revision_rounds,
+    )
+    runner = OpenAIAgentRunner(client=client, model=model)
+    planner = OpenAIAdaptivePlanner(
+        client=client,
+        model=model,
+        max_output_tokens=budget.max_output_tokens,
+    )
+    report_agent = OpenAIReportAgent(
+        client=client,
+        model=model,
+        max_output_tokens=budget.max_output_tokens,
     )
 
     def research(question: str):

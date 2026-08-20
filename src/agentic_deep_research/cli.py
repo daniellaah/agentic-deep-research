@@ -38,8 +38,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
     client = OpenAI()
     runner = OpenAIAgentRunner(client=client, model=model)
-    planner = OpenAIAdaptivePlanner(client=client, model=model)
-    report_agent = OpenAIReportAgent(client=client, model=model)
+    planner = OpenAIAdaptivePlanner(
+        client=client,
+        model=model,
+        max_output_tokens=request.budget.max_output_tokens,
+    )
+    report_agent = OpenAIReportAgent(
+        client=client,
+        model=model,
+        max_output_tokens=request.budget.max_output_tokens,
+    )
     result = run_research(
         request,
         runner=runner,
