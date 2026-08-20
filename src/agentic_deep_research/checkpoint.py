@@ -282,7 +282,7 @@ class JsonCheckpointStore:
         with self._lock:
             current = self._leases.get(run_id)
             now = time.time()
-            if current is None or current[0] != owner_id or current[1] <= now:
+            if current is None or current[0] != owner_id:
                 raise RuntimeError(f"execution lease lost: {run_id}")
             updated = mutation(self.load(run_id))
             self.save(updated)
@@ -503,7 +503,6 @@ class SQLiteCheckpointStore:
             if (
                 lease is None
                 or str(lease[0]) != owner_id
-                or float(lease[1]) <= now
             ):
                 raise RuntimeError(f"execution lease lost: {run_id}")
             row = connection.execute(

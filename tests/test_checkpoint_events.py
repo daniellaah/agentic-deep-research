@@ -203,3 +203,28 @@ def test_concurrent_updates_receive_unique_contiguous_event_sequences(tmp_path) 
         after_sequence=2,
         limit=2,
     )] == [3, 4]
+
+
+def test_late_owner_can_renew_unless_an_expired_lease_was_taken_over(tmp_path) -> None:
+    store = SQLiteCheckpointStore(tmp_path / "checkpoints.sqlite3")
+    state = _created_state("lease-fencing")
+    store.create(state)
+    store.acquire_lease(state.run_id, "owner-one", ttl_seconds=0)
+
+    renewed = store.update_owned(
+        state.run_id,
+        "owner-one",
+        1,
+        lambda current: _transition(current, current_step="late-renewal"),
+    )
+    assert renewed.current_step == "late-renewal"
+
+    store.acquire_lease(state.run_id, "owner-one", ttl_seconds=0)
+    store.acquire_lease(state.run_id, "owner-two", ttl_seconds=1)
+    with pytest.raises(RuntimeError, match="execution lease lost"):
+        store.update_owned(
+            state.run_id,
+            "owner-one",
+            1,
+            lambda current: _transition(current, current_step="stale-owner"),
+        )
