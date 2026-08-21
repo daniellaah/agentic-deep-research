@@ -21,11 +21,27 @@ tracing begins when the first multi-step Agent loop is introduced.
   framework unless a later specification explicitly changes the project scope.
 - Automated tests are not required unless the current specification requests them.
 
+## Specification Workflow
+
+- Before implementing or reviewing a release, read `MISSION.md`, `TECH_STACK.md`,
+  `ROADMAP.md`, `specs/README.md`, and the relevant release specification.
+- Treat the active release specification as the source of truth for that release's
+  observable behavior, runtime flow, artifacts, trace contract, stopping behavior,
+  implementation constraints, and completion criteria.
+- Treat `ROADMAP.md` as sequencing direction, not as an implementation specification.
+- Do not implement a planned capability unless it is included in the active release
+  specification.
+- If the required release specification is missing, contradictory, or materially
+  incomplete, resolve the specification before changing runtime code.
+- When a roadmap or specification decision depends on time-sensitive API behavior or
+  current Agent research, verify it against current primary sources and record only the
+  decision-relevant rationale in the applicable release specification.
+
 ## Product Boundaries
 
 - Provide a command-line interface with live progress output.
-- Do not support mid-run user interaction until a planning release explicitly introduces
-  a human approval point.
+- Do not support mid-run user interaction until a scoping release explicitly introduces
+  bounded clarification and a ResearchBrief approval point.
 - Use only the OpenAI Responses API for model interaction.
 - Implement a custom function-tool loop before adopting hosted tool orchestration so that
   the agent harness remains visible.

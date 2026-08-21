@@ -28,6 +28,8 @@ Every specification should include:
 - State what changes in the trace and final report.
 - Include at least one repeatable manual acceptance question.
 - Identify the limitation that motivates any new abstraction or dependency.
+- Research time-sensitive APIs or Agent techniques when the release depends on them, then
+  record the decision-relevant rationale in the specification.
 - Do not silently expand the release while implementing it.
 - Record unresolved design choices explicitly.
 - Update the roadmap if the release scope changes materially.
@@ -43,3 +45,4 @@ Use one of:
 - `Released`
 
 A Git tag may be created only after the specification reaches `Verified`.
+After the release tag is created, update the specification status to `Released`.

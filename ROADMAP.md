@@ -2,34 +2,32 @@
 
 ## Roadmap Policy
 
-The roadmap is a learning sequence, not a promise to implement every named technique
-unchanged. Each release builds cumulatively on `deep_research.py`, remains runnable, and
-receives a Git tag only after manual verification.
+The roadmap is a cumulative learning sequence, not a commitment to preserve every future
+design unchanged. Each release adds one primary mechanism to the same runnable
+`deep_research.py` program and should make that mechanism observable without hiding it
+behind an agent framework.
 
-Near-term releases are concrete. Later releases are provisional and must be reviewed
-against observed runtime and trace failures and current research before their
-specifications are written.
+Near-term releases through 0.7.0 are concrete enough to guide specifications. Work beyond
+0.7.0 is intentionally described as one broad direction and will be divided into releases
+only after earlier traces and reports reveal the next useful learning problems.
+
+Every release must be specified before implementation, manually verified before tagging,
+and kept as simple as its learning objective allows.
 
 ## Release Ladder
 
-| Version | Learning focus | Observable outcome | Status |
+| Version | Primary mechanism | Observable outcome | Status |
 | --- | --- | --- | --- |
-| 0.1.0 | One Responses API call | One question produces concise progress and a Markdown report | Released |
-| 0.2.0 | Manual-history function-tool loop | A local tool is called through a visible loop whose complete input history is application-owned | Planned |
-| 0.3.0 | Paper research | The agent searches scholarly metadata and produces a source-backed short report | Planned |
-| 0.4.0 | Web research | The agent searches the web, reads selected sources, and combines paper and web evidence | Planned |
-| 0.5.0 | Evidence and provenance | Findings are normalized, deduplicated, and linked to sources in an explicit evidence ledger | Planned |
-| 0.6.0 | Research planning and approval | The agent decomposes a question, shows its plan, and waits for one user approval before execution | Planned |
-| 0.7.0 | Adaptive exploration | The agent detects gaps and contradictions, revises queries, and stops using explicit sufficiency rules | Planned |
-| 0.8.0 | Long-horizon harness | Budgets, retries, history management, compaction, and recoverable failures are visible in the trace | Planned |
-| 0.9.0 | Report and citation verification | Claims are checked against evidence and unsupported or weakly supported claims are surfaced | Planned |
-| 0.10.0 | Draft-first refinement | A preliminary report guides retrieval and is iteratively revised with new evidence | Planned |
-| 0.11.0 | Parallel research | Independent research branches run concurrently under explicit concurrency and budget limits | Planned |
-| 0.12.0 | Orchestrator-worker research | A lead agent delegates suitable subproblems, validates findings, and synthesizes the report | Planned |
-| 0.13.0 | Durable human collaboration | Runs can pause, resume, accept bounded steering, and preserve approved research state | Planned |
-| 0.14.0 | Frontier comparisons | Selected hosted tools, programmatic tool calling, memory, or multi-agent APIs are compared with the visible baseline | Planned |
+| 0.1.0 | One Responses API call | One question produces live progress and a Markdown report | Released |
+| 0.2.0 | Fixed report-refinement workflow | Separate write, critic, and revise calls expose the value and limits of deterministic orchestration | Planned |
+| 0.3.0 | Tool-using research Agent | A visible custom tool loop searches the web and arXiv, records a structured trace, and produces a source-grounded report | Planned |
+| 0.4.0 | Static structured planning | A one-shot planner creates a validated research plan that the research Agent executes sequentially | Planned |
+| 0.5.0 | Scoping and ResearchBrief | Bounded clarification and user approval establish an explicit research contract before planning | Planned |
+| 0.6.0 | Adaptive supervisor-worker research | A supervisor repeatedly observes shared research state and delegates one next task to an isolated worker until sufficient or budget-limited | Planned |
+| 0.7.0 | Bounded parallel research | The supervisor dispatches independent worker tasks concurrently while preserving budgets, provenance, and failure visibility | Planned |
+| Later | Advanced deep-research reliability and scale | Later mechanisms are selected from failures observed in the implemented releases | Direction |
 
-## Phase 1: Model and Agent Foundations
+## Phase 1: Model and Workflow Foundations
 
 ### 0.1.0 — One Responses API Call
 
@@ -43,107 +41,142 @@ Establish the smallest complete runnable baseline:
 - no structured trace for the single linear call.
 
 This release deliberately has no tool, loop, history, iteration model, or Agent
-abstraction. Structured tracing begins with the multi-step Agent behavior in release
-0.2.0.
+abstraction.
 
-### 0.2.0 — Manual-History Function-Tool Loop
+### 0.2.0 — Fixed Write-Critic-Revise Workflow
 
-Turn the baseline into the first actual Agent:
+Introduce deterministic multi-call orchestration before an autonomous Agent loop:
 
-- an explicit `agent_loop` around `llm_call`;
-- one deterministic local function tool;
-- explicit detection and execution of function calls;
-- one ordered, application-owned Responses API history;
-- every provider output item preserved and replayed;
-- `function_call_output` linked by `call_id`;
-- bounded loop and stopping behavior;
-- history growth visible in the trace.
+```text
+question -> write -> critic -> revise -> report
+```
 
-The loop remains synchronous. It does not use `previous_response_id`, the Conversations
-API, an Agent SDK, or hosted tool orchestration.
+- `write` creates the initial report draft;
+- `critic` reviews structure, reasoning, completeness, and instruction following;
+- `revise` receives the draft and critique and produces the final report;
+- the run saves `draft.md`, `critique.md`, and `report.md`; and
+- live progress makes each fixed stage and its outcome visible.
 
-## Phase 2: Evidence Acquisition
+The three calls do not share an Agent loop. Each stage receives only the explicit upstream
+artifacts it needs. Because this release has no research tools or external evidence, the
+critic must not claim to verify factual accuracy or citations. A structured Agent trace is
+still unnecessary; the intermediate artifacts are the observable workflow record.
 
-### 0.3.0 — Paper Research
+## Phase 2: Research and Planning
 
-Add a paper-search function tool and enough source metadata to support a short
-evidence-backed report. The release should expose query construction, result selection,
-and source attribution.
+### 0.3.0 — Observable Tool-Using Research Agent
 
-### 0.4.0 — Web Research
+Introduce the first actual Agent and the first structured trace:
 
-Add web search and source reading. The release should make search results, selected pages,
-failed fetches, and extracted information visible.
+```text
+question -> research Agent -> write -> critic -> revise -> report
+```
 
-### 0.5.0 — Evidence and Provenance
+- implement an explicit synchronous function-tool loop around `llm_call`;
+- provide web search, selected-page reading, and arXiv paper search as custom function
+  tools;
+- let the application own and replay the ordered Responses API input history rather than
+  use `previous_response_id` or the Conversations API;
+- bound tool calls and loop iterations with explicit stopping behavior;
+- preserve source metadata in structured research results; and
+- write serializable trace events for model activity, tool calls and results, history
+  transitions, errors, usage, and stopping decisions.
 
-Separate collected evidence from conversational context. Introduce stable source identity,
-deduplication, claim support, and provenance without splitting the runtime into modules.
+The collected research becomes the evidence input to the existing write-critic-revise
+workflow. The report should cite its sources, but formal claim-level citation verification
+is deferred. Planning, Pydantic models, parallel execution, and a supervisor are also out
+of scope so the tool loop remains easy to inspect.
 
-## Phase 3: Research Control
+### 0.4.0 — Static Structured Research Planning
 
-### 0.6.0 — Research Planning and Approval
+Add a one-shot planner stage before research:
 
-Create an explicit research plan before execution. This is the first release with mid-run
-input: the user may approve, reject, or revise the proposed plan once.
+```text
+question -> static plan -> sequential research -> write -> critic -> revise -> report
+```
 
-### 0.7.0 — Adaptive Exploration
+- generate one bounded plan with explicit research tasks and completion criteria;
+- validate model-generated planning data with Pydantic models such as `ResearchPlan` and
+  `ResearchTask`;
+- execute the plan sequentially with the existing research Agent;
+- associate research results and trace events with their plan task; and
+- show the plan in live output, then continue without a mid-run approval point.
 
-Use the evolving plan and evidence state to decide what to research next. Add explicit gap,
-contradiction, marginal-value, and sufficiency signals.
+This is a planner stage, not a stateful planner Agent. The plan is immutable during the
+run, which creates a clear baseline for later adaptive control. Pydantic is limited to
+validated model or tool boundaries; internal history and trace events remain plain data.
 
-### 0.8.0 — Long-Horizon Harness
+### 0.5.0 — Scoping and ResearchBrief
 
-Introduce practical controls only after real long runs expose the need for them:
+Turn the user's initial question into an approved research contract before planning:
 
-- iteration, tool, token, time, and concurrency budgets;
-- transient retry policy;
-- partial failure semantics;
-- history pruning and response compaction;
-- resumable checkpoints where justified.
+```text
+question -> scoping -> ResearchBrief approval -> static plan -> research -> report workflow
+```
 
-## Phase 4: Report Reliability
+- detect ambiguities that would materially change the research;
+- when needed, ask at most three targeted questions in one clarification round;
+- create a structured `ResearchBrief` covering objective, audience, scope, exclusions,
+  time horizon, source preferences, output requirements, and success criteria;
+- show the brief and allow one bounded approval or revision point; and
+- pass only the approved brief into planning and downstream research.
 
-### 0.9.0 — Report and Citation Verification
+This is the first release with mid-run user interaction. It remains a bounded research
+intake flow rather than an open-ended chat experience.
 
-Audit whether important claims are supported by the cited evidence. Record verification
-results in the trace and make uncertainty visible in the report.
+## Phase 3: Adaptive Research
 
-### 0.10.0 — Draft-First Refinement
+### 0.6.0 — Adaptive Supervisor-Worker Research
 
-Create a preliminary report skeleton, use its weak sections to guide further retrieval, and
-revise it iteratively. Compare this process with the earlier gather-then-write baseline.
+Replace the immutable static plan with a living, observation-driven research state:
 
-## Phase 5: Scaling Research
+```text
+ResearchBrief
+    -> initialize ResearchState
+    -> supervisor observes state
+    -> dispatch one isolated research worker
+    -> merge structured result
+    -> repeat or finish
+    -> write -> critic -> revise -> report
+```
 
-### 0.11.0 — Parallel Research
+- maintain explicit task, evidence, gap, contradiction, failure, and budget ledgers in
+  `ResearchState`;
+- require each supervisor turn to return a validated `SupervisorDecision`, such as
+  dispatching a next task or finishing;
+- give every research worker a fresh, independent Responses API history containing only
+  the approved brief, its task, relevant evidence, available tools, and worker budget;
+- return a structured `ResearchResult` rather than the worker's full transcript to the
+  supervisor;
+- let the supervisor observe ledgers and concise decision summaries without recording or
+  claiming to expose private chain-of-thought; and
+- enforce hard limits for supervisor rounds, worker tasks, tool calls, tokens, elapsed
+  time, and estimated cost.
 
-Introduce asynchronous execution only when genuinely independent retrieval branches can
-run concurrently. Preserve branch identity, resource use, and evidence provenance in a
-single trace.
+The supervisor may finish early when coverage and evidence are sufficient, contradictions
+are addressed, important gaps are exhausted, or another task has low expected value. Hard
+budgets remain authoritative. Workers execute sequentially in this release so adaptive
+delegation and context isolation can be understood before concurrency is introduced.
 
-### 0.12.0 — Orchestrator-Worker Research
+### 0.7.0 — Bounded Parallel Research Workers
 
-Introduce specialized worker agents only for decomposable research tasks. The orchestrator
-owns delegation, overlap control, validation, budgets, and synthesis.
+Add concurrency only after the sequential supervisor-worker control loop is observable:
 
-### 0.13.0 — Durable Human Collaboration
+- let the supervisor emit a bounded batch of independent research tasks;
+- execute workers concurrently under explicit global and per-worker limits;
+- keep each worker's context, tool budget, task identity, and trace branch isolated;
+- merge results centrally into the shared evidence and task ledgers;
+- surface partial failures, retries, cancellations, overlap, and deduplication; and
+- preserve parent-child trace relationships and deterministic final synthesis inputs.
 
-Support pause, resume, bounded steering, and durable approved state without turning the
-CLI into an open-ended chat application.
+Parallelism is a scheduling optimization, not a new research policy. Dependent tasks stay
+sequential, and the system must retain a single-worker path for questions that do not
+benefit from decomposition.
 
-## Phase 6: Frontier Comparisons
+## Later Direction: Advanced Deep-Research Reliability and Scale
 
-### 0.14.0 and Later
-
-Evaluate selected techniques against the accumulated visible baseline, including:
-
-- OpenAI built-in web search versus application-owned search;
-- manual history management versus hosted continuation state;
-- direct tool calls versus programmatic tool calling;
-- single-agent versus hosted or application-managed multi-agent execution;
-- cross-run memory and experience distillation;
-- self-critique, candidate generation, and self-improvement loops.
-
-A frontier technique enters an implementation spec only when it has a clear learning
-question, a suitable baseline, and an observable comparison.
+After 0.7.0, improve evidence reliability, citation verification, long-horizon execution,
+recoverability, human collaboration, context management, and frontier architecture
+comparisons based on failures observed in the earlier releases. These capabilities remain
+unscheduled until the implemented traces, reports, costs, and failure modes provide a
+clear reason to split them into new specifications.

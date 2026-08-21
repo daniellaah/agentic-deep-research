@@ -53,7 +53,7 @@ harder to understand without them.
 ### Treat observability as product behavior
 
 Release 0.1.0 uses live terminal progress for its single linear model call. Starting with
-the multi-step Agent loop in release 0.2.0, the saved trace becomes part of the learning
+the tool-using Agent loop in release 0.3.0, the saved trace becomes part of the learning
 experience rather than debug output added after the Agent is built.
 
 ### Let observed failures justify complexity

@@ -38,9 +38,10 @@ history, or structured trace.
 The provider primitive is the thin
 `llm_call(client, model_name, model_input) -> Response` function. It returns the official
 SDK `Response` without wrapping it, while `main` owns the CLI harness and invokes
-`llm_call` once. Release 0.2.0 will place an explicit `agent_loop` around this primitive.
+`llm_call` once. Release 0.2.0 will reuse this primitive in three explicit fixed workflow
+stages. Release 0.3.0 will place the first `agent_loop` around it.
 
-### Manual history from release 0.2.0
+### Manual history from release 0.3.0
 
 The explicit `agent_loop` invokes `llm_call` repeatedly and maintains one ordered
 `input_items` list in application memory:
@@ -52,10 +53,10 @@ The explicit `agent_loop` invokes `llm_call` repeatedly and maintains one ordere
 
 The project does not use `previous_response_id` or the Conversations API.
 
-When requests use `store: false`, reasoning items needed for stateless continuation,
-including opaque encrypted content returned by the API, remain in the ordered history.
-The application replays those provider items without interpreting them or presenting them
-as private chain-of-thought.
+Reasoning and assistant items needed for stateless continuation remain in the ordered
+history. The application preserves provider-owned fields such as opaque encrypted content
+or phase metadata when returned, replays those items without interpreting them, and does
+not present them as private chain-of-thought.
 
 The official OpenAI documentation states that manually managed history should preserve
 prior user inputs and every response output item. Recheck the
@@ -78,7 +79,8 @@ uv run deep_research.py "Question"
 ```
 
 The CLI has one initial question and emits concise live progress. It does not accept
-mid-run input until a planning release introduces an explicit approval point.
+mid-run input until the scoping release introduces bounded clarification and an explicit
+ResearchBrief approval point.
 
 The first release uses plain terminal text and the standard library. `python-dotenv` is
 limited to loading local `.env` configuration. A terminal rendering dependency may be
@@ -94,8 +96,9 @@ runs/<run-id>/
 └── report.md
 ```
 
-Structured `trace.jsonl` output begins in release 0.2.0, when the first multi-step Agent
-loop introduces model, tool, history, and stopping transitions worth inspecting.
+Release 0.2.0 adds `draft.md` and `critique.md` as visible intermediate workflow artifacts.
+Structured `trace.jsonl` output begins in release 0.3.0, when the first Agent loop
+introduces model, tool, history, and stopping transitions worth inspecting.
 
 `report.md` contains the final user-facing result. Later releases may add evidence or
 checkpoint artifacts only when their specifications require them.
@@ -119,13 +122,14 @@ provider.
 
 ## Data Representation
 
-Starting in release 0.2.0, use plain dictionaries and lists for trace events and Responses
+Starting in release 0.3.0, use plain dictionaries and lists for trace events and Responses
 API history while they remain easy to understand. Serialize trace events with the standard
 `json` module.
 
 Introduce a named data structure only when repeated validation or invariants make the
-plain representation harder to follow. Do not introduce Pydantic merely for internal
-values.
+plain representation harder to follow. Pydantic may validate model-generated planning,
+brief, decision, or result structures at explicit boundaries, but should not replace plain
+internal history and trace data merely for consistency.
 
 ## Quality Tooling
 
