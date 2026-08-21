@@ -83,7 +83,7 @@ Report written: runs/<run-id>/report.md
 Run completed.
 ```
 
-Each successful run creates:
+Each successful run creates the following directory under the repository root:
 
 ```text
 runs/<run-id>/

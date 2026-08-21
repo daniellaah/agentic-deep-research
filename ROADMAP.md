@@ -7,14 +7,14 @@ unchanged. Each release builds cumulatively on `deep_research.py`, remains runna
 receives a Git tag only after manual verification.
 
 Near-term releases are concrete. Later releases are provisional and must be reviewed
-against observed trace failures and current research before their specifications are
-written.
+against observed runtime and trace failures and current research before their
+specifications are written.
 
 ## Release Ladder
 
 | Version | Learning focus | Observable outcome | Status |
 | --- | --- | --- | --- |
-| 0.1.0 | One Responses API call | One question produces concise progress, a JSONL trace, and a Markdown report | Spec drafted |
+| 0.1.0 | One Responses API call | One question produces concise progress and a Markdown report | Released |
 | 0.2.0 | Manual-history function-tool loop | A local tool is called through a visible loop whose complete input history is application-owned | Planned |
 | 0.3.0 | Paper research | The agent searches scholarly metadata and produces a source-backed short report | Planned |
 | 0.4.0 | Web research | The agent searches the web, reads selected sources, and combines paper and web evidence | Planned |
@@ -37,19 +37,20 @@ Establish the smallest complete runnable baseline:
 
 - one initial question;
 - one synchronous Responses API call;
+- one explicit `llm_call` provider boundary;
 - concise live progress around that call;
-- the provider response saved in a JSONL trace;
-- final output saved as a Markdown report;
-- trace preservation when the API call fails.
+- final output saved as a Markdown report; and
+- no structured trace for the single linear call.
 
 This release deliberately has no tool, loop, history, iteration model, or Agent
-abstraction. It makes the raw request, response, trace, and artifact boundaries easy to
-understand before Agent behavior is introduced.
+abstraction. Structured tracing begins with the multi-step Agent behavior in release
+0.2.0.
 
 ### 0.2.0 — Manual-History Function-Tool Loop
 
 Turn the baseline into the first actual Agent:
 
+- an explicit `agent_loop` around `llm_call`;
 - one deterministic local function tool;
 - explicit detection and execution of function calls;
 - one ordered, application-owned Responses API history;

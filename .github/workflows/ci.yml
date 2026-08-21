@@ -34,3 +34,6 @@ jobs:
 
       - name: Lint
         run: uv run --locked ruff check .
+
+      - name: Type check
+        run: uv run --locked mypy deep_research.py

@@ -52,8 +52,9 @@ harder to understand without them.
 
 ### Treat observability as product behavior
 
-The live terminal trajectory and the saved trace are part of the learning experience, not
-debug output added after the agent is built.
+Release 0.1.0 uses live terminal progress for its single linear model call. Starting with
+the multi-step Agent loop in release 0.2.0, the saved trace becomes part of the learning
+experience rather than debug output added after the Agent is built.
 
 ### Let observed failures justify complexity
 
@@ -76,7 +77,8 @@ The project succeeds when:
 
 - each tagged release is complete, understandable, and manually verified;
 - the current runtime can be understood by reading one Python file;
-- a user can watch a run progress and inspect the saved trajectory afterward;
+- a user can watch a run progress and, for multi-step Agent releases, inspect the saved
+  trajectory afterward;
 - the final report is distinguishable from unsupported model recall;
 - each major mechanism has a clear learning question and an observable effect;
 - later complexity can be traced to limitations discovered in earlier releases.

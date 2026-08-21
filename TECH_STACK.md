@@ -32,12 +32,18 @@ learning code stable while model availability changes.
 
 ### Release 0.1.0 state
 
-The first release makes exactly one Responses API call. It has no tool, loop, or
-conversation history.
+The first release makes exactly one Responses API call. It has no tool, loop, conversation
+history, or structured trace.
+
+The provider primitive is the thin
+`llm_call(client, model_name, model_input) -> Response` function. It returns the official
+SDK `Response` without wrapping it, while `main` owns the CLI harness and invokes
+`llm_call` once. Release 0.2.0 will place an explicit `agent_loop` around this primitive.
 
 ### Manual history from release 0.2.0
 
-Multi-call releases maintain one ordered `input_items` list in application memory:
+The explicit `agent_loop` invokes `llm_call` repeatedly and maintains one ordered
+`input_items` list in application memory:
 
 1. start with the user input;
 2. append every item from each `openai_response.output` in its original order;
@@ -65,31 +71,31 @@ features are adopted. Hosted capabilities remain later comparison points.
 
 ## Command-Line Interface
 
-The planned invocation shape is:
+The invocation shape is:
 
 ```text
-uv run --env-file .env deep_research.py "Question"
+uv run deep_research.py "Question"
 ```
 
 The CLI has one initial question and emits concise live progress. It does not accept
 mid-run input until a planning release introduces an explicit approval point.
 
-The first release uses plain terminal text and the standard library. A terminal rendering
-dependency may be added only when a release requires behavior that is difficult to express
-clearly without it.
+The first release uses plain terminal text and the standard library. `python-dotenv` is
+limited to loading local `.env` configuration. A terminal rendering dependency may be
+added only when a release requires behavior that is difficult to express clearly without
+it.
 
 ## Run Artifacts
 
-Every run writes to a unique directory under `runs/`:
+Release 0.1.0 writes one report to a unique directory under `runs/`:
 
 ```text
 runs/<run-id>/
-├── trace.jsonl
 └── report.md
 ```
 
-`trace.jsonl` is the canonical record of observable run events. Terminal output is a
-small human-readable projection of the same activity.
+Structured `trace.jsonl` output begins in release 0.2.0, when the first multi-step Agent
+loop introduces model, tool, history, and stopping transitions worth inspecting.
 
 `report.md` contains the final user-facing result. Later releases may add evidence or
 checkpoint artifacts only when their specifications require them.
@@ -98,8 +104,10 @@ Generated run artifacts are local and ignored by Git.
 
 ## Configuration
 
-`.env.example` documents required variables. The actual `.env` file remains local and
-must never be read into documentation, printed during diagnostics, or committed.
+`.env.example` documents required variables. The runtime loads `.env` through
+`python-dotenv`; values already present in the process environment take precedence. The
+actual `.env` file remains local and must never be read into documentation, printed during
+diagnostics, or committed.
 
 Initial variables:
 
@@ -111,8 +119,9 @@ provider.
 
 ## Data Representation
 
-Use plain dictionaries and lists for trace events and Responses API history while they
-remain easy to understand. Serialize events with the standard `json` module.
+Starting in release 0.2.0, use plain dictionaries and lists for trace events and Responses
+API history while they remain easy to understand. Serialize trace events with the standard
+`json` module.
 
 Introduce a named data structure only when repeated validation or invariants make the
 plain representation harder to follow. Do not introduce Pydantic merely for internal
@@ -147,4 +156,4 @@ A dependency is acceptable only when:
 3. the dependency does not introduce a framework that owns the agent loop; and
 4. its purpose is recorded in this document.
 
-The project currently depends only on the OpenAI SDK at runtime.
+The project currently depends on the OpenAI SDK and `python-dotenv` at runtime.

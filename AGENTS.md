@@ -4,8 +4,8 @@
 
 Build a deep-research command-line agent as a sequence of small, complete, observable
 learning releases. Each release should make one or more model or agent mechanisms
-understandable through a runnable implementation, a structured trace, and a final
-Markdown report.
+understandable through a runnable implementation and a final Markdown report. Structured
+tracing begins when the first multi-step Agent loop is introduced.
 
 ## Development Model
 
@@ -30,7 +30,8 @@ Markdown report.
 - Implement a custom function-tool loop before adopting hosted tool orchestration so that
   the agent harness remains visible.
 - Introduce paper search and web search incrementally through release specifications.
-- Produce a structured, serializable trace and a final Markdown report for completed runs.
+- Produce a final Markdown report for completed runs and, starting with multi-step Agent
+  releases, a structured, serializable trace.
 - Trace model and tool activity without claiming to expose private chain-of-thought.
 
 ## Language
