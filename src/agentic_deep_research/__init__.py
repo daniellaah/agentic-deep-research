@@ -1,1 +1,0 @@
-"""Agentic deep research application."""

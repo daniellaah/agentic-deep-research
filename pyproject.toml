@@ -1,33 +1,20 @@
 [project]
 name = "agentic-deep-research"
 version = "0.1.0"
-description = "An observable deep-research agent with a web interface"
+description = "A single-file deep-research CLI for learning agent design"
 requires-python = ">=3.12,<3.13"
 dependencies = [
-    "fastapi>=0.135,<1",
-    "pydantic>=2.12,<3",
-    "pydantic-settings>=2.13,<3",
-    "uvicorn>=0.35,<1",
+    "openai>=3.3.1,<4",
 ]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
-    "httpx>=0.28,<1",
     "mypy>=1.17,<2",
-    "pytest>=8,<10",
-    "pytest-asyncio>=1.1,<2",
     "ruff>=0.14,<1",
 ]
 
 [tool.uv]
-package = true
-
-[tool.hatch.build.targets.wheel]
-packages = ["src/agentic_deep_research"]
+package = false
 
 [tool.ruff]
 line-length = 100
@@ -39,9 +26,3 @@ select = ["B", "E", "F", "I", "UP"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-mypy_path = "src"
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "function"

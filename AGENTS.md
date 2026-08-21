@@ -2,35 +2,36 @@
 
 ## Project Purpose
 
-Build a production-style deep-research agent as a sequence of small, complete,
-observable vertical slices. The codebase should remain understandable at every step.
+Build a deep-research command-line agent as a sequence of small, complete, observable
+learning releases. Each release should make one or more agent mechanisms understandable
+through a runnable implementation, a structured trace, and a final Markdown report.
 
-## Initial Release Scope
+## Development Model
 
-The first release is `0.1.0`. Do not create the `v0.1.0` Git tag until all of the
-following are complete and verified:
+- Use spec-driven development. Define each release in `specs/` before implementing it.
+- Keep all runtime behavior in the repository-root `deep_research.py` file.
+- Evolve that file cumulatively; every release must remain complete and runnable.
+- Prefer direct, explicit code over frameworks, layers, adapters, and premature abstractions.
+- Add a dependency only when the current release specification requires it.
+- Do not add a web application, service API, provider-neutral gateway, or evaluation
+  framework unless a later specification explicitly changes the project scope.
+- Automated tests are not required unless the current specification requests them.
 
-- a minimal agent loop;
-- a web application that can start a run;
-- structured trace collection;
-- a web view of the run trajectory.
+## Product Boundaries
 
-Evaluation is intentionally outside the initial release.
+- Provide a command-line interface with live progress output.
+- Do not support mid-run user interaction until a planning release explicitly introduces
+  a human approval point.
+- Use only the OpenAI Responses API for model interaction.
+- Begin with custom function-tool loops so that the agent harness remains visible.
+- Introduce paper search and web search incrementally through release specifications.
+- Produce a structured, serializable trace and a final Markdown report for completed runs.
+- Trace model and tool activity without claiming to expose private chain-of-thought.
 
-## Collaboration Workflow
+## Language
 
-The repository owner implements feature code in order to understand the complete
-development path. Unless the owner explicitly asks for implementation, an agent must:
-
-1. explain the feature goal and design first;
-2. identify the files and responsibilities involved;
-3. guide the owner through small implementation steps;
-4. review and explain the owner's changes;
-5. help verify the result before moving to the next feature.
-
-Agents may create and maintain directory structure, dependency configuration,
-development tooling, and other project scaffolding. They must not directly implement
-agent behavior, trace behavior, web business logic, or evaluation unless explicitly asked.
+All repository-authored content must be in English, including documentation, source code,
+comments, prompts, CLI text, configuration, commit messages, and release notes.
 
 ## Branches and Releases
 
@@ -43,47 +44,19 @@ agent behavior, trace behavior, web business logic, or evaluation unless explici
 - Use `docs/<name>` for documentation-only work.
 - Follow Semantic Versioning for project versions.
 - Release tags use the form `vMAJOR.MINOR.PATCH`.
+- Create a release tag only after its specification has been implemented and manually
+  verified.
 
-## Architecture Boundaries
+## Generated Artifacts
 
-Backend code lives under `src/agentic_deep_research`:
-
-- `domain`: trusted internal concepts and rules;
-- `application`: use cases and ports;
-- `infrastructure`: implementations of application ports;
-- `api`: HTTP boundary and transport schemas.
-
-Dependency direction is `api -> application -> domain`. Infrastructure may depend on
-application ports and domain types, but domain and application code must not depend on
-FastAPI, databases, or model-provider SDKs.
-
-The frontend lives under `web/src`. Organize product capabilities under `features`,
-shared visual elements under `components`, and framework-independent helpers under `lib`.
-
-Do not add an abstraction or dependency until the current feature requires it.
-
-## Data Models
-
-- Use frozen, slotted standard-library dataclasses for trusted internal domain values.
-- Use Pydantic models at untrusted boundaries such as HTTP requests, configuration,
-  serialized data, and provider structured output.
-- Do not use Pydantic as the default model for every internal object.
-
-## Trace Requirements
-
-Every completed agent run must eventually produce structured, serializable trace events.
-Trace data may include execution state, tool activity, timing, inputs, and outputs. It must
-not claim to expose a model's private chain-of-thought.
+- Store generated run artifacts under `runs/`.
+- Do not commit generated traces, reports, caches, virtual environments, or secrets.
+- Keep `.env` local and document required variables in `.env.example`.
 
 ## Required Checks
 
-Run these checks after changing the corresponding area:
+Run the checks configured for the current release. Until runtime code is introduced, run:
 
 ```text
-uv run ruff check src tests
-uv run mypy src
-uv run pytest
-npm --prefix web run check
-npm --prefix web run test
-npm --prefix web run build
+uv run ruff check .
 ```
