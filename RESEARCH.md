@@ -23,9 +23,9 @@ effects remain visible.
 ### A visible tool loop should precede hosted research features
 
 The Responses API supports custom function tools, built-in tools, MCP, streaming,
-conversation continuation, and tool limits. Starting with a custom function tool keeps the
-application-owned loop, arguments, outputs, stopping decision, and trace observable before
-hosted features are compared.
+conversation continuation, and tool limits. Starting with a custom function tool and
+application-owned history keeps inputs, outputs, arguments, stopping decisions, and the
+trace observable before hosted state and tools are compared.
 
 ### Evidence should become explicit before planning becomes complex
 
@@ -51,8 +51,8 @@ multi-agent delegation and retains a single-agent path.
 
 | Source | Relevant finding | Roadmap effect |
 | --- | --- | --- |
-| [OpenAI Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create) | Responses can use custom functions, built-in tools, MCP, streaming, continuation state, parallel calls, and explicit limits | Implement a custom loop first; reserve hosted capabilities for later comparisons |
-| [OpenAI model guidance](https://developers.openai.com/api/docs/guides/latest-model) | Current model guidance includes persisted reasoning, compaction-related practices, programmatic tool calling, and multi-agent capabilities | Recheck these features during long-context and frontier releases instead of binding early code to them |
+| [OpenAI Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create) | Responses can use custom functions, built-in tools, MCP, streaming, continuation state, parallel calls, explicit limits, and encrypted reasoning items for stateless use | Implement a custom loop with application-owned history first; reserve hosted state and tools for later comparisons |
+| [OpenAI model guidance](https://developers.openai.com/api/docs/guides/latest-model) | Manual history requires replaying prior user inputs and every response output item, including reasoning items; current guidance also covers compaction and newer orchestration features | Make full history replay part of the first visible baseline and revisit compression only after long runs exist |
 | [Deep Research: A Survey of Autonomous Research Agents](https://arxiv.org/abs/2508.12752) | Organizes deep research around planning, question development, web exploration, and report generation | Supports the staged progression from retrieval to planning and synthesis |
 | [Deep Research: A Systematic Survey](https://arxiv.org/abs/2512.02038) | Highlights query planning, information acquisition, memory management, and answer generation as core components | Places memory and context work after real acquisition and planning state exist |
 | [Deep Researcher with Test-Time Diffusion](https://research.google/pubs/deep-researcher-with-test-time-diffusion/) | Uses a preliminary draft as an evolving skeleton and retrieval-guided iterative refinement | Motivates the draft-first release after an evidence-grounded report baseline |

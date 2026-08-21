@@ -122,7 +122,8 @@ CLI into an open-ended chat application.
 Evaluate selected techniques against the accumulated visible baseline, including:
 
 - OpenAI built-in web search versus application-owned search;
-- manual history management versus response continuation and compaction;
+- the application-owned history baseline versus hosted response continuation and
+  compaction;
 - direct tool calls versus programmatic tool calling;
 - single-agent versus hosted or application-managed multi-agent execution;
 - cross-run memory and experience distillation;

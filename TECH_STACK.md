@@ -35,9 +35,16 @@ OpenAI tools, MCP, programmatic tool calling, hosted deep-research models, and m
 features are later comparison points. They must not hide a mechanism before the project
 has implemented and observed that mechanism directly.
 
-The first release continues iterations with `previous_response_id`. Manual provider
-history ownership and response compaction are deferred until a long-horizon release so
-they can be learned as a separate context-engineering concern.
+The application owns conversation history from the first release. It preserves the
+initial user input, appends every response output item in order, appends each
+`function_call_output`, and sends the complete accumulated history as the next Responses
+API `input`. It does not use `previous_response_id` or the Conversations API.
+
+The first release uses `store: false` and requests `reasoning.encrypted_content`. Reasoning
+items, including opaque encrypted content needed for stateless continuation, remain part
+of the replayed history but are never interpreted or presented as private
+chain-of-thought. History pruning and response compaction are deferred until the
+long-horizon harness release.
 
 Current Responses API capabilities and schemas must be checked against the
 [official OpenAI documentation](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)
