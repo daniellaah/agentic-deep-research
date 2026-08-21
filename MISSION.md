@@ -14,6 +14,7 @@ navigating an application architecture.
 A contributor should be able to use the repository to understand and experiment with:
 
 - the OpenAI Responses API and response-item model;
+- the difference between a single model call and an agent loop;
 - a complete function-tool calling loop;
 - agent harness concerns such as limits, errors, state, and stopping;
 - live progress and structured trace collection;
@@ -28,8 +29,9 @@ A contributor should be able to use the repository to understand and experiment 
 
 ### Learn mechanisms by making them visible
 
-Core behavior should be implemented explicitly before an equivalent hosted or framework
-feature is adopted. Provider-managed capabilities may later be introduced as comparisons.
+Start with one direct provider call, then implement Agent behavior explicitly before an
+equivalent hosted or framework feature is adopted. Provider-managed capabilities may
+later be introduced as comparisons.
 
 ### Grow through complete vertical slices
 
@@ -41,6 +43,12 @@ fragment.
 
 All runtime behavior lives in the repository-root `deep_research.py`. New releases modify
 that file instead of creating parallel implementations or architectural layers.
+
+### Use the simplest adequate representation
+
+Prefer local variables, functions, dictionaries, and lists. Introduce named data
+structures, asynchronous execution, or abstractions only when a concrete release becomes
+harder to understand without them.
 
 ### Treat observability as product behavior
 

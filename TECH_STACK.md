@@ -11,59 +11,72 @@ it.
 - **Language:** Python 3.12
 - **Environment and dependency management:** uv
 - **Runtime file:** `deep_research.py` at the repository root
-- **Execution model:** asynchronous Python with `asyncio`
+- **Execution model:** synchronous Python until concurrency is required
 - **Default implementation preference:** Python standard library before new dependencies
 
-Asynchronous execution is selected early because later releases will need streaming,
-concurrent tool calls, and parallel research branches. It does not imply an internal
-framework or multiple runtime modules.
+The first releases use ordinary functions, dictionaries, lists, and local variables.
+Classes, dataclasses, protocols, event hierarchies, and asynchronous execution are added
+only when a concrete release becomes easier to understand with them.
 
 ## Model API
 
 - **Provider:** OpenAI only
 - **API:** Responses API only
 - **SDK:** official OpenAI Python SDK
-- **Client:** `AsyncOpenAI`
+- **Client:** `OpenAI`
 - **Model configuration:** required through `MODEL_NAME`
 - **Credentials:** required through `OPENAI_API_KEY`
 
 The model name is configuration rather than a hard-coded project decision. This keeps the
 learning code stable while model availability changes.
 
-The first releases use custom function tools and an application-managed loop. Built-in
-OpenAI tools, MCP, programmatic tool calling, hosted deep-research models, and multi-agent
-features are later comparison points. They must not hide a mechanism before the project
-has implemented and observed that mechanism directly.
+### Release 0.1.0 state
 
-The application owns conversation history from the first release. It preserves the
-initial user input, appends every response output item in order, appends each
-`function_call_output`, and sends the complete accumulated history as the next Responses
-API `input`. It does not use `previous_response_id` or the Conversations API.
+The first release makes exactly one Responses API call. It has no tool, loop, or
+conversation history.
 
-The first release uses `store: false` and requests `reasoning.encrypted_content`. Reasoning
-items, including opaque encrypted content needed for stateless continuation, remain part
-of the replayed history but are never interpreted or presented as private
-chain-of-thought. History pruning and response compaction are deferred until the
-long-horizon harness release.
+### Manual history from release 0.2.0
 
-Current Responses API capabilities and schemas must be checked against the
-[official OpenAI documentation](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)
-when a release is specified or implemented.
+Multi-call releases maintain one ordered `input_items` list in application memory:
+
+1. start with the user input;
+2. append every item from each `openai_response.output` in its original order;
+3. append application-owned `function_call_output` items; and
+4. send the complete list as the next Responses API `input`.
+
+The project does not use `previous_response_id` or the Conversations API.
+
+When requests use `store: false`, reasoning items needed for stateless continuation,
+including opaque encrypted content returned by the API, remain in the ordered history.
+The application replays those provider items without interpreting them or presenting them
+as private chain-of-thought.
+
+The official OpenAI documentation states that manually managed history should preserve
+prior user inputs and every response output item. Recheck the
+[Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create)
+and [current model guidance](https://developers.openai.com/api/docs/guides/latest-model)
+when specifying or implementing a multi-call release.
+
+### Hosted capabilities
+
+Custom function tools and application-owned history are implemented before built-in
+OpenAI tools, MCP, programmatic tool calling, hosted deep-research models, or multi-agent
+features are adopted. Hosted capabilities remain later comparison points.
 
 ## Command-Line Interface
 
 The planned invocation shape is:
 
 ```text
-uv run --env-file .env deep_research.py "Research question"
+uv run --env-file .env deep_research.py "Question"
 ```
 
-The CLI has one initial question and emits live progress. It does not accept mid-run input
-until a planning release introduces an explicit approval point.
+The CLI has one initial question and emits concise live progress. It does not accept
+mid-run input until a planning release introduces an explicit approval point.
 
-The first release uses plain terminal text. A terminal rendering dependency may be added
-only when a release requires behavior that is difficult to express clearly with the
-standard library.
+The first release uses plain terminal text and the standard library. A terminal rendering
+dependency may be added only when a release requires behavior that is difficult to express
+clearly without it.
 
 ## Run Artifacts
 
@@ -76,7 +89,7 @@ runs/<run-id>/
 ```
 
 `trace.jsonl` is the canonical record of observable run events. Terminal output is a
-human-readable projection of those events rather than a separate logging model.
+small human-readable projection of the same activity.
 
 `report.md` contains the final user-facing result. Later releases may add evidence or
 checkpoint artifacts only when their specifications require them.
@@ -98,16 +111,16 @@ provider.
 
 ## Data Representation
 
-Use built-in values and frozen, slotted dataclasses when named trusted runtime values make
-the single file easier to understand. Serialize trace events with the standard `json`
-module.
+Use plain dictionaries and lists for trace events and Responses API history while they
+remain easy to understand. Serialize events with the standard `json` module.
 
-Do not introduce Pydantic merely for internal values. It may be adopted later for a
-genuinely untrusted structured boundary or provider-generated structured output.
+Introduce a named data structure only when repeated validation or invariants make the
+plain representation harder to follow. Do not introduce Pydantic merely for internal
+values.
 
 ## Quality Tooling
 
-- Ruff for formatting-independent static checks and linting
+- Ruff for static checks and linting
 - mypy in strict mode once runtime code exists
 - manual acceptance runs defined by each release specification
 - no automated test suite during the initial learning releases

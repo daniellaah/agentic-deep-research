@@ -3,8 +3,9 @@
 ## Project Purpose
 
 Build a deep-research command-line agent as a sequence of small, complete, observable
-learning releases. Each release should make one or more agent mechanisms understandable
-through a runnable implementation, a structured trace, and a final Markdown report.
+learning releases. Each release should make one or more model or agent mechanisms
+understandable through a runnable implementation, a structured trace, and a final
+Markdown report.
 
 ## Development Model
 
@@ -12,6 +13,9 @@ through a runnable implementation, a structured trace, and a final Markdown repo
 - Keep all runtime behavior in the repository-root `deep_research.py` file.
 - Evolve that file cumulatively; every release must remain complete and runnable.
 - Prefer direct, explicit code over frameworks, layers, adapters, and premature abstractions.
+- Prefer plain functions, dictionaries, and lists until observed complexity justifies a
+  named structure.
+- Keep execution synchronous until a release requires concurrency or streaming.
 - Add a dependency only when the current release specification requires it.
 - Do not add a web application, service API, provider-neutral gateway, or evaluation
   framework unless a later specification explicitly changes the project scope.
@@ -23,7 +27,8 @@ through a runnable implementation, a structured trace, and a final Markdown repo
 - Do not support mid-run user interaction until a planning release explicitly introduces
   a human approval point.
 - Use only the OpenAI Responses API for model interaction.
-- Begin with custom function-tool loops so that the agent harness remains visible.
+- Implement a custom function-tool loop before adopting hosted tool orchestration so that
+  the agent harness remains visible.
 - Introduce paper search and web search incrementally through release specifications.
 - Produce a structured, serializable trace and a final Markdown report for completed runs.
 - Trace model and tool activity without claiming to expose private chain-of-thought.

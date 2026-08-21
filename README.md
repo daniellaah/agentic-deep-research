@@ -27,7 +27,7 @@ runs/<run-id>/
 └── report.md
 ```
 
-The same trace events will drive both live terminal progress and the saved trajectory.
+Terminal progress and the saved trace describe the same small set of run milestones.
 
 ## Documentation
 
@@ -37,7 +37,7 @@ The same trace events will drive both live terminal progress and the saved traje
 - [Research notes](RESEARCH.md)
 - [Repository instructions](AGENTS.md)
 - [Release specifications](specs/README.md)
-- [v0.1.0 specification](specs/v0.1.0-observable-tool-loop.md)
+- [v0.1.0 specification](specs/v0.1.0-single-response.md)
 
 ## Development Sequence
 
