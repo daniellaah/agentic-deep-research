@@ -7,18 +7,22 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A learning-oriented deep-research CLI that adds model and Agent mechanisms one observable
-release at a time. The current release exposes a deterministic write-critic-revise
-workflow before research tools and an autonomous Agent loop are introduced.
+release at a time. The current release exposes a custom tool-using Agent loop, manual
+Responses API history, and bounded research before the report enters an explicit
+write-critic-revise workflow.
 
 ## Core Features
 
 - Accepts a research question through a single CLI command.
-- Runs an explicit write-critic-revise workflow with three synchronous Responses API
-  requests.
-- Shows each fixed stage's progress and the final report in the terminal.
-- Saves the draft, critique, and final report in a unique run directory.
-- Loads credentials and model selection from environment variables.
-- Keeps the complete runtime in one Python file.
+- Lets the model select simple Tavily web search and arXiv paper search through two custom
+  function tools.
+- Keeps the complete ordered Responses API history in the application and enforces hard
+  model-turn and tool-call limits.
+- Shows Agent turns, tool selections, fixed report stages, and the final report in the
+  terminal.
+- Keeps research notes, draft, critique, and final report in memory without writing files.
+- Loads OpenAI, Tavily Search, and model configuration from environment variables.
+- Keeps the workflow in `deep_research.py` and tool details in `agent_tools.py`.
 
 ## Quick Start
 
@@ -27,6 +31,7 @@ workflow before research tools and an autonomous Agent loop are introduced.
 - Python 3.12
 - [uv](https://docs.astral.sh/uv/)
 - An OpenAI API key and access to the model you want to use
+- A [Tavily API](https://www.tavily.com/) key
 
 ### Install
 
@@ -42,11 +47,12 @@ Create your local configuration:
 cp .env.example .env
 ```
 
-Set both required values in `.env`:
+Set all required values in `.env`:
 
 ```dotenv
 OPENAI_API_KEY=your_api_key
 MODEL_NAME=your_model_name
+TAVILY_API_KEY=your_tavily_api_key
 ```
 
 Keep `.env` private and never commit it.
@@ -77,30 +83,27 @@ uv run deep_research.py --help
 The command prints stage progress and the final report directly in the terminal:
 
 ```text
-[1/3] Write started: <model-name>
-[1/3] Write completed: runs/<run-id>/draft.md
-[2/3] Critic started: <model-name>
-[2/3] Critic completed: runs/<run-id>/critique.md
-[3/3] Revise started: <model-name>
-[3/3] Revise completed: runs/<run-id>/report.md
+[1/4] Research started.
+[Research 1/10] Model started (tools remaining: 8)
+[Tool 1/8] tavily_search_tool started.
+[Tool 1/8] tavily_search_tool completed.
+...
+[1/4] Research completed.
+[2/4] Write started.
+[2/4] Write completed.
+[3/4] Critic started.
+[3/4] Critic completed.
+[4/4] Revise started.
+[4/4] Revise completed.
 
 Final report:
 <final report>
 
-Report written: runs/<run-id>/report.md
 Run completed.
 ```
 
-Each successful run creates the following directory under the repository root:
-
-```text
-runs/<run-id>/
-├── draft.md
-├── critique.md
-└── report.md
-```
-
-Generated run artifacts are local and ignored by Git.
+Release 0.3.0 does not create a run directory or write application output files.
+Structured tracing is also not part of this release.
 
 ## Configuration
 
@@ -108,6 +111,7 @@ Generated run artifacts are local and ignored by Git.
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Yes | API key used to authenticate with OpenAI. |
 | `MODEL_NAME` | Yes | OpenAI model used to generate the report. |
+| `TAVILY_API_KEY` | Yes | API key used for custom web search calls. |
 
 The CLI automatically loads `.env` from the repository root. Values already present in
 the process environment take precedence over values in `.env`.
@@ -116,29 +120,34 @@ the process environment take precedence over values in `.env`.
 
 ```text
 Research question
+    → bounded Research Agent
+        → tavily_search_tool
+        → arxiv_search_tool
+        → application-owned response history
+    → research notes
     → Write
     → Critic
     → Revise
-    → terminal output
-    → runs/<run-id>/{draft,critique,report}.md
+    → final report in the terminal
 ```
 
-The runtime validates the question and configuration, then makes three explicit model
-requests. The writer receives the question, the critic receives the question and draft,
-and the reviser receives the question, draft, and critique. Each request is stateless and
-the application passes only the text needed by the next stage. API and artifact failures
-stop the workflow, produce a concise error, and return a nonzero exit code.
+The Research Agent repeatedly calls the synchronous Responses API, appends every model
+output item to an ordered history, executes requested functions, and appends each result
+with its matching `call_id`. It stops when the model returns research notes or a hard limit
+is reached. The writer receives the question and notes; the critic also receives the draft;
+the reviser receives all explicit upstream text. Model failures stop the workflow, while
+tool failures are returned to the Agent so it can adapt within the remaining budget.
 
 ## Project Structure
 
 ```text
 .
-├── deep_research.py     # Complete application runtime
+├── deep_research.py     # Prompts, Agent loop, report workflow, and CLI
+├── agent_tools.py       # Tool schemas, implementations, and dispatch
 ├── specs/              # Release specifications
 ├── .env.example        # Required configuration template
 ├── pyproject.toml      # Project metadata and dependencies
-├── uv.lock             # Locked dependency versions
-└── runs/               # Generated reports; ignored by Git
+└── uv.lock             # Locked dependency versions
 ```
 
 ## Documentation

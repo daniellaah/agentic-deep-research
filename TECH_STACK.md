@@ -10,7 +10,8 @@ it.
 
 - **Language:** Python 3.12
 - **Environment and dependency management:** uv
-- **Runtime file:** `deep_research.py` at the repository root
+- **Workflow runtime:** `deep_research.py` at the repository root
+- **Custom tools:** `agent_tools.py` at the repository root
 - **Execution model:** synchronous Python until concurrency is required
 - **Default implementation preference:** Python standard library before new dependencies
 
@@ -30,18 +31,19 @@ only when a concrete release becomes easier to understand with them.
 The model name is configuration rather than a hard-coded project decision. This keeps the
 learning code stable while model availability changes.
 
-### Release 0.2.0 state
+### Release 0.3.0 state
 
-The runtime makes three Responses API calls in one fixed write-critic-revise workflow. It
-has no tool, Agent loop, conversation history, or structured trace. Each request is
-stateless and uses `store=False`; the application passes the question and generated text
-needed by the next stage as explicit input.
+The runtime begins with an explicit synchronous `agent_loop` in which the model can select
+simple Tavily web search and arXiv paper search functions. The loop owns an ordered
+in-memory history and enforces model-turn and tool-call limits. Its final research notes
+become the evidence input to the existing explicit Write, Critic, and Revise calls.
 
-The provider primitive is the thin `llm_call(client, model_name, instructions,
-model_input) -> Response` function. It returns the official SDK `Response` without wrapping
-it. `research_workflow` owns the three explicit stage calls and returns the final report
-and its path, while `main` owns the CLI harness, client construction, and top-level error
-handling. Release 0.3.0 will place the first `agent_loop` around this provider boundary.
+Every request remains stateless and uses `store=False`. The provider primitive is the thin
+`llm_call(client, model_name, instructions, model_input, tools=None) -> Response` function,
+which returns the official SDK `Response` without wrapping it. `research_workflow` owns the
+Agent and three report stages, while `main` owns the CLI harness, client construction, and
+top-level error handling and prints the final report. `agent_tools.py` owns the tool
+schemas, functions, and dispatch.
 
 ### Manual history from release 0.3.0
 
@@ -72,6 +74,25 @@ Custom function tools and application-owned history are implemented before built
 OpenAI tools, MCP, programmatic tool calling, hosted deep-research models, or multi-agent
 features are adopted. Hosted capabilities remain later comparison points.
 
+## Research Tools
+
+- **Web search:** synchronous Tavily Python SDK
+- **Paper search:** arXiv query API with Atom XML parsing
+- **Tool execution:** synchronous custom function calls in response order
+
+`TAVILY_API_KEY` authenticates general web search. `tavily_search_tool` returns only title,
+content, and URL fields from Tavily results. `arxiv_search_tool` uses `requests` to call the
+arXiv API and the standard library to parse title, author, date, abstract URL, summary, and
+PDF URL fields from its Atom feed.
+
+Both JSON tool definitions and both function implementations live in `agent_tools.py` so
+`deep_research.py` shows the Agent loop without network-client details.
+
+Release 0.3.0 deliberately omits selected-page reading, arbitrary URL fetching, network
+destination controls, citation allowlists, and output correction. `tavily-python` and
+`requests` keep the two tool implementations short while the application continues to own
+the Agent loop.
+
 ## Command-Line Interface
 
 The invocation shape is:
@@ -89,7 +110,7 @@ limited to loading local `.env` configuration. A terminal rendering dependency m
 added only when a release requires behavior that is difficult to express clearly without
 it.
 
-## Run Artifacts
+## Run Output
 
 Release 0.1.0 writes one report to a unique directory under `runs/`:
 
@@ -99,13 +120,12 @@ runs/<run-id>/
 ```
 
 Release 0.2.0 adds `draft.md` and `critique.md` as visible intermediate workflow artifacts.
-Structured `trace.jsonl` output begins in release 0.3.0, when the first Agent loop
-introduces model, tool, history, and stopping transitions worth inspecting.
+Release 0.3.0 removes file output to keep the first Agent release focused. Research notes,
+draft, critique, and final report remain in memory. The CLI prints progress and the final
+Markdown report. It does not create a run directory.
 
-`report.md` contains the final user-facing result. Later releases may add evidence or
-checkpoint artifacts only when their specifications require them.
-
-Generated run artifacts are local and ignored by Git.
+Later releases may add artifacts only when their specifications require them. Historical
+generated artifacts remain local and ignored by Git.
 
 ## Configuration
 
@@ -114,44 +134,27 @@ Generated run artifacts are local and ignored by Git.
 actual `.env` file remains local and must never be read into documentation, printed during
 diagnostics, or committed.
 
-Initial variables:
+Current variables:
 
 - `OPENAI_API_KEY`
 - `MODEL_NAME`
-
-New search-provider credentials may be added only when the relevant tool release selects a
-provider.
+- `TAVILY_API_KEY`
 
 ## Data Representation
 
-Starting in release 0.3.0, use plain dictionaries and lists for trace events and Responses
-API history while they remain easy to understand. Serialize trace events with the standard
-`json` module.
+Starting in release 0.3.0, use plain dictionaries and lists for Responses API history and
+tool results while they remain easy to understand.
 
 Introduce a named data structure only when repeated validation or invariants make the
 plain representation harder to follow. Pydantic may validate model-generated planning,
 brief, decision, or result structures at explicit boundaries, but should not replace plain
-internal history and trace data merely for consistency.
+internal history data merely for consistency.
 
-## Quality Tooling
+## Quality Checks
 
-- Ruff for static checks and linting
-- mypy in strict mode once runtime code exists
-- manual acceptance runs defined by each release specification
-- no automated test suite during the initial learning releases
-
-The baseline repository check is:
-
-```text
-uv run ruff check .
-```
-
-Once `deep_research.py` exists, the expected checks become:
-
-```text
-uv run ruff check deep_research.py
-uv run mypy deep_research.py
-```
+Release 0.3.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
+its specification. Ruff, mypy, and an automated test suite are intentionally omitted while
+the learning runtime is kept minimal.
 
 ## Dependency Policy
 
@@ -162,4 +165,5 @@ A dependency is acceptable only when:
 3. the dependency does not introduce a framework that owns the agent loop; and
 4. its purpose is recorded in this document.
 
-The project currently depends on the OpenAI SDK and `python-dotenv` at runtime.
+The project currently depends on the OpenAI SDK, `python-dotenv`, `tavily-python`, and
+`requests` at runtime.

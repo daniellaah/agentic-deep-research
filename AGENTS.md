@@ -5,13 +5,15 @@
 Build a deep-research command-line agent as a sequence of small, complete, observable
 learning releases. Each release should make one or more model or agent mechanisms
 understandable through a runnable implementation and a final Markdown report. Structured
-tracing begins when the first multi-step Agent loop is introduced.
+tracing is deferred until a release specification explicitly introduces it.
 
 ## Development Model
 
 - Use spec-driven development. Define each release in `specs/` before implementing it.
-- Keep all runtime behavior in the repository-root `deep_research.py` file.
-- Evolve that file cumulatively; every release must remain complete and runnable.
+- Keep the workflow and Agent loop in the repository-root `deep_research.py` file.
+- Keep custom tool definitions and implementations in the repository-root
+  `agent_tools.py` file.
+- Evolve those files cumulatively; every release must remain complete and runnable.
 - Prefer direct, explicit code over frameworks, layers, adapters, and premature abstractions.
 - Prefer plain functions, dictionaries, and lists until observed complexity justifies a
   named structure.
@@ -26,8 +28,8 @@ tracing begins when the first multi-step Agent loop is introduced.
 - Before implementing or reviewing a release, read `MISSION.md`, `TECH_STACK.md`,
   `ROADMAP.md`, `specs/README.md`, and the relevant release specification.
 - Treat the active release specification as the source of truth for that release's
-  observable behavior, runtime flow, artifacts, trace contract, stopping behavior,
-  implementation constraints, and completion criteria.
+  observable behavior, runtime flow, output, stopping behavior, implementation constraints,
+  and completion criteria.
 - Treat `ROADMAP.md` as sequencing direction, not as an implementation specification.
 - Do not implement a planned capability unless it is included in the active release
   specification.
@@ -46,9 +48,9 @@ tracing begins when the first multi-step Agent loop is introduced.
 - Implement a custom function-tool loop before adopting hosted tool orchestration so that
   the agent harness remains visible.
 - Introduce paper search and web search incrementally through release specifications.
-- Produce a final Markdown report for completed runs and, starting with multi-step Agent
-  releases, a structured, serializable trace.
-- Trace model and tool activity without claiming to expose private chain-of-thought.
+- Produce a final Markdown report for completed runs.
+- Add structured tracing only when an active release specification requires it, without
+  claiming to expose private chain-of-thought.
 
 ## Language
 
@@ -77,8 +79,10 @@ comments, prompts, CLI text, configuration, commit messages, and release notes.
 
 ## Required Checks
 
-Run the checks configured for the current release. Until runtime code is introduced, run:
+Release 0.3.0 requires only Python compilation, CLI startup, and its manual acceptance
+scenario:
 
 ```text
-uv run ruff check .
+uv run python -m py_compile deep_research.py agent_tools.py
+uv run deep_research.py --help
 ```

@@ -3,13 +3,13 @@
 ## Roadmap Policy
 
 The roadmap is a cumulative learning sequence, not a commitment to preserve every future
-design unchanged. Each release adds one primary mechanism to the same runnable
-`deep_research.py` program and should make that mechanism observable without hiding it
-behind an agent framework.
+design unchanged. Each release adds one primary mechanism to the same small runnable
+program and should make that mechanism observable without hiding it behind an agent
+framework.
 
 Near-term releases through 0.7.0 are concrete enough to guide specifications. Work beyond
 0.7.0 is intentionally described as one broad direction and will be divided into releases
-only after earlier traces and reports reveal the next useful learning problems.
+only after earlier runs and reports reveal the next useful learning problems.
 
 Every release must be specified before implementation, manually verified before tagging,
 and kept as simple as its learning objective allows.
@@ -20,7 +20,7 @@ and kept as simple as its learning objective allows.
 | --- | --- | --- | --- |
 | 0.1.0 | One Responses API call | One question produces live progress and a Markdown report | Released |
 | 0.2.0 | Fixed report-refinement workflow | Separate write, critic, and revise calls expose the value and limits of deterministic orchestration | Verified |
-| 0.3.0 | Tool-using research Agent | A visible custom tool loop searches the web and arXiv, records a structured trace, and produces a source-grounded report | Planned |
+| 0.3.0 | Tool-using research Agent | A visible custom tool loop searches the web and arXiv, then produces a source-grounded report through write, critic, and revise stages | Verified |
 | 0.4.0 | Static structured planning | A one-shot planner creates a validated research plan that the research Agent executes sequentially | Planned |
 | 0.5.0 | Scoping and ResearchBrief | Bounded clarification and user approval establish an explicit research contract before planning | Planned |
 | 0.6.0 | Adaptive supervisor-worker research | A supervisor repeatedly observes shared research state and delegates one next task to an isolated worker until sufficient or budget-limited | Planned |
@@ -64,28 +64,28 @@ still unnecessary; the intermediate artifacts are the observable workflow record
 
 ## Phase 2: Research and Planning
 
-### 0.3.0 — Observable Tool-Using Research Agent
+### 0.3.0 — Tool-Using Research Agent
 
-Introduce the first actual Agent and the first structured trace:
+Introduce the first actual Agent:
 
 ```text
 question -> research Agent -> write -> critic -> revise -> report
 ```
 
 - implement an explicit synchronous function-tool loop around `llm_call`;
-- provide web search, selected-page reading, and arXiv paper search as custom function
-  tools;
+- provide simple Tavily web search and arXiv paper search as custom function tools;
 - let the application own and replay the ordered Responses API input history rather than
   use `previous_response_id` or the Conversations API;
 - bound tool calls and loop iterations with explicit stopping behavior;
-- preserve source metadata in structured research results; and
-- write serializable trace events for model activity, tool calls and results, history
-  transitions, errors, usage, and stopping decisions.
+- preserve source metadata in structured research results;
+- keep tool schemas and implementations in `agent_tools.py`; and
+- expose execution through live progress and the final report printed in the terminal.
 
 The collected research becomes the evidence input to the existing write-critic-revise
 workflow. The report should cite its sources, but formal claim-level citation verification
 is deferred. Planning, Pydantic models, parallel execution, and a supervisor are also out
-of scope so the tool loop remains easy to inspect.
+of scope so the tool loop remains easy to inspect. Structured tracing is deferred to a
+later release whose learning question requires it.
 
 ### 0.4.0 — Static Structured Research Planning
 
@@ -99,12 +99,12 @@ question -> static plan -> sequential research -> write -> critic -> revise -> r
 - validate model-generated planning data with Pydantic models such as `ResearchPlan` and
   `ResearchTask`;
 - execute the plan sequentially with the existing research Agent;
-- associate research results and trace events with their plan task; and
+- associate research results with their plan task; and
 - show the plan in live output, then continue without a mid-run approval point.
 
 This is a planner stage, not a stateful planner Agent. The plan is immutable during the
 run, which creates a clear baseline for later adaptive control. Pydantic is limited to
-validated model or tool boundaries; internal history and trace events remain plain data.
+validated model or tool boundaries; internal history remains plain data.
 
 ### 0.5.0 — Scoping and ResearchBrief
 
@@ -178,5 +178,5 @@ benefit from decomposition.
 After 0.7.0, improve evidence reliability, citation verification, long-horizon execution,
 recoverability, human collaboration, context management, and frontier architecture
 comparisons based on failures observed in the earlier releases. These capabilities remain
-unscheduled until the implemented traces, reports, costs, and failure modes provide a
+unscheduled until the implemented runs, reports, costs, and failure modes provide a
 clear reason to split them into new specifications.

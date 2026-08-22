@@ -3,6 +3,12 @@
 Each release specification defines one complete, cumulative learning slice. A spec is
 written before implementation and remains the acceptance reference for its release.
 
+## Releases
+
+- [v0.1.0 — One Responses API Call](v0.1.0-single-response.md) — Released
+- [v0.2.0 — Fixed Write-Critic-Revise Workflow](v0.2.0-report-refinement.md) — Verified
+- [v0.3.0 — Tool-Using Research Agent](v0.3.0-tool-research-agent.md) — Verified
+
 ## Required Sections
 
 Every specification should include:
@@ -13,7 +19,7 @@ Every specification should include:
 4. **User-visible behavior**
 5. **Runtime flow**
 6. **CLI contract**
-7. **Trace contract**
+7. **Observability contract**
 8. **Artifact contract**
 9. **Failure and stopping behavior**
 10. **Implementation constraints**
@@ -25,7 +31,7 @@ Every specification should include:
 
 - Describe observable behavior before implementation details.
 - Keep the release runnable as a complete system.
-- State what changes in the trace and final report.
+- State what the user can observe during and after a run.
 - Include at least one repeatable manual acceptance question.
 - Identify the limitation that motivates any new abstraction or dependency.
 - Research time-sensitive APIs or Agent techniques when the release depends on them, then

@@ -5,9 +5,9 @@
 Build a deep-research command-line agent to learn how modern agents work by implementing
 their mechanisms directly, one observable release at a time.
 
-The project favors understanding over product breadth. Its runtime remains in one
-cumulative Python file so the complete agent can always be read, run, and changed without
-navigating an application architecture.
+The project favors understanding over product breadth. Its runtime remains in two small
+root-level Python files: `deep_research.py` for the workflow and Agent loop, and
+`agent_tools.py` for custom tool definitions and implementations.
 
 ## Primary Outcome
 
@@ -17,7 +17,7 @@ A contributor should be able to use the repository to understand and experiment 
 - the difference between a single model call and an agent loop;
 - a complete function-tool calling loop;
 - agent harness concerns such as limits, errors, state, and stopping;
-- live progress and structured trace collection;
+- live progress and terminal-visible workflow output;
 - paper and web research tools;
 - planning, adaptive retrieval, evidence tracking, and citation;
 - context engineering and long-horizon execution;
@@ -39,10 +39,11 @@ Every release must accept a question, run to completion, expose what happened, a
 a final Markdown report. A release may be small, but it must not be a disconnected code
 fragment.
 
-### Keep one cumulative runtime
+### Keep one small cumulative runtime
 
-All runtime behavior lives in the repository-root `deep_research.py`. New releases modify
-that file instead of creating parallel implementations or architectural layers.
+Workflow behavior lives in the repository-root `deep_research.py`; custom tool definitions
+and implementations live in `agent_tools.py`. New releases evolve these files instead of
+creating parallel implementations or architectural layers.
 
 ### Use the simplest adequate representation
 
@@ -52,9 +53,10 @@ harder to understand without them.
 
 ### Treat observability as product behavior
 
-Release 0.1.0 uses live terminal progress for its single linear model call. Starting with
-the tool-using Agent loop in release 0.3.0, the saved trace becomes part of the learning
-experience rather than debug output added after the Agent is built.
+Release 0.1.0 uses live terminal progress for its single linear model call. Release 0.3.0
+keeps the tool-using Agent loop observable entirely through terminal progress and the
+printed final report. Structured tracing is deferred until a later learning question
+requires it.
 
 ### Let observed failures justify complexity
 
@@ -76,9 +78,8 @@ APIs, and research results change.
 The project succeeds when:
 
 - each tagged release is complete, understandable, and manually verified;
-- the current runtime can be understood by reading one Python file;
-- a user can watch a run progress and, for multi-step Agent releases, inspect the saved
-  trajectory afterward;
+- the current runtime can be understood by reading two focused Python files;
+- a user can watch the complete workflow and read the final report in the terminal;
 - the final report is distinguishable from unsupported model recall;
 - each major mechanism has a clear learning question and an observable effect;
 - later complexity can be traced to limitations discovered in earlier releases.
