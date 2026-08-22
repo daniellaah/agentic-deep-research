@@ -7,22 +7,26 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A learning-oriented deep-research CLI that adds model and Agent mechanisms one observable
-release at a time. The current release exposes a custom tool-using Agent loop, manual
-Responses API history, and bounded research before the report enters an explicit
+release at a time. The current release creates one validated static research plan, executes
+its tasks sequentially with a custom tool-using Agent loop, and then runs an explicit
 write-critic-revise workflow.
 
 ## Core Features
 
 - Accepts a research question through a single CLI command.
+- Creates and prints one bounded Pydantic-validated research plan with ordered tasks and
+  completion criteria.
 - Lets the model select simple Tavily web search and arXiv paper search through two custom
   function tools.
-- Keeps the complete ordered Responses API history in the application and enforces hard
-  model-turn and tool-call limits.
-- Shows Agent turns, tool selections, fixed report stages, and the final report in the
-  terminal.
-- Keeps research notes, draft, critique, and final report in memory without writing files.
+- Runs every plan task sequentially with fresh application-owned Responses API history and
+  independent hard model-turn and tool-call limits.
+- Shows the plan, task boundaries, Agent turns, tool selections, every intermediate result,
+  report stages, and final report in consistently formatted terminal sections.
+- Keeps the plan, research notes, draft, critique, and final report in memory without
+  writing files.
 - Loads OpenAI, Tavily Search, and model configuration from environment variables.
-- Keeps the workflow in `deep_research.py` and tool details in `agent_tools.py`.
+- Keeps the workflow in `deep_research.py`, detailed model instructions in
+  `agent_instructions.py`, and tool details in `agent_tools.py`.
 
 ## Quick Start
 
@@ -80,29 +84,49 @@ uv run deep_research.py --help
 
 ## Generated Output
 
-The command prints stage progress and the final report directly in the terminal:
+The command prints stage progress, every intermediate result, and the final report directly
+in the terminal:
 
 ```text
-[1/4] Research started.
-[Research 1/10] Model started (tools remaining: 8)
-[Tool 1/8] tavily_search_tool started.
-[Tool 1/8] tavily_search_tool completed.
+[1/5] Plan | STARTED
+[1/5] Plan | COMPLETED | 2 tasks
+
+================================================================================
+RESEARCH PLAN
+================================================================================
+1. <task title>
+   Research question: <focused question>
+   Completion criteria:
+     - <observable evidence or coverage>
+================================================================================
+
+[2/5] Research | STARTED | 2 tasks
+  [Task 1/2] <task title> | STARTED
+    [Turn 1/10] Model | STARTED | 8 tools remaining
+    [Tool 1/8] tavily_search_tool | STARTED
+    [Tool 1/8] tavily_search_tool | COMPLETED
 ...
-[1/4] Research completed.
-[2/4] Write started.
-[2/4] Write completed.
-[3/4] Critic started.
-[3/4] Critic completed.
-[4/4] Revise started.
-[4/4] Revise completed.
+  [Task 1/2] <task title> | COMPLETED
 
-Final report:
+================================================================================
+RESEARCH NOTES | TASK 1/2 | <task title>
+================================================================================
+<task research notes>
+================================================================================
+
+... each remaining task, followed by COMBINED RESEARCH NOTES, DRAFT, and CRITIQUE blocks ...
+
+[5/5] Revise | COMPLETED
+================================================================================
+FINAL REPORT
+================================================================================
 <final report>
+================================================================================
 
-Run completed.
+[Run] Deep research | COMPLETED
 ```
 
-Release 0.3.0 does not create a run directory or write application output files.
+Release 0.4.0 does not create a run directory or write application output files.
 Structured tracing is also not part of this release.
 
 ## Configuration
@@ -110,7 +134,7 @@ Structured tracing is also not part of this release.
 | Variable | Required | Description |
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Yes | API key used to authenticate with OpenAI. |
-| `MODEL_NAME` | Yes | OpenAI model used to generate the report. |
+| `MODEL_NAME` | Yes | OpenAI model supporting Structured Outputs and custom function tools. |
 | `TAVILY_API_KEY` | Yes | API key used for custom web search calls. |
 
 The CLI automatically loads `.env` from the repository root. Values already present in
@@ -120,34 +144,42 @@ the process environment take precedence over values in `.env`.
 
 ```text
 Research question
-    → bounded Research Agent
-        → tavily_search_tool
-        → arxiv_search_tool
-        → application-owned response history
-    → research notes
+    → validated static research plan
+    → sequential plan tasks
+        → bounded Research Agent with fresh history
+            → tavily_search_tool
+            → arxiv_search_tool
+        → task-scoped research notes
     → Write
     → Critic
     → Revise
     → final report in the terminal
 ```
 
-The Research Agent repeatedly calls the synchronous Responses API, appends every model
-output item to an ordered history, executes requested functions, and appends each result
-with its matching `call_id`. It stops when the model returns research notes or a hard limit
-is reached. The writer receives the question and notes; the critic also receives the draft;
-the reviser receives all explicit upstream text. Model failures stop the workflow, while
-tool failures are returned to the Agent so it can adapt within the remaining budget.
+The planner makes one synchronous Structured Outputs request and validates the result as a
+Pydantic `ResearchPlan`. The application prints that immutable plan, then invokes the same
+Research Agent loop once per task in order. Each loop appends every model output item to
+fresh ordered history, executes requested functions, and links every result with its
+matching `call_id`. The application keeps each result associated with its task during
+research, then passes only the original question and combined note text into Write. Critic
+and Revise build on that same report context without receiving the plan or task metadata.
+Research requests use automatic tool selection while budget remains. After the eighth tool
+attempt, the next request keeps the same Research instructions and tools but uses
+`tool_choice="none"` so the model must produce final notes from the collected evidence.
+Model failures stop the workflow, while tool failures are returned to the active Agent so
+it can adapt within its remaining budget.
 
 ## Project Structure
 
 ```text
 .
-├── deep_research.py     # Prompts, Agent loop, report workflow, and CLI
-├── agent_tools.py       # Tool schemas, implementations, and dispatch
-├── specs/              # Release specifications
-├── .env.example        # Required configuration template
-├── pyproject.toml      # Project metadata and dependencies
-└── uv.lock             # Locked dependency versions
+├── deep_research.py       # Agent loop, report workflow, and CLI
+├── agent_instructions.py  # Detailed instructions for every model stage
+├── agent_tools.py         # Tool schemas, implementations, and dispatch
+├── specs/                 # Release specifications
+├── .env.example           # Required configuration template
+├── pyproject.toml         # Project metadata and dependencies
+└── uv.lock                # Locked dependency versions
 ```
 
 ## Documentation

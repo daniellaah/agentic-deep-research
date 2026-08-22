@@ -5,9 +5,10 @@
 Build a deep-research command-line agent to learn how modern agents work by implementing
 their mechanisms directly, one observable release at a time.
 
-The project favors understanding over product breadth. Its runtime remains in two small
-root-level Python files: `deep_research.py` for the workflow and Agent loop, and
-`agent_tools.py` for custom tool definitions and implementations.
+The project favors understanding over product breadth. Its runtime remains in three focused
+root-level Python files: `deep_research.py` for the workflow and Agent loop,
+`agent_instructions.py` for model instructions, and `agent_tools.py` for custom tool
+definitions and implementations.
 
 ## Primary Outcome
 
@@ -41,9 +42,10 @@ fragment.
 
 ### Keep one small cumulative runtime
 
-Workflow behavior lives in the repository-root `deep_research.py`; custom tool definitions
-and implementations live in `agent_tools.py`. New releases evolve these files instead of
-creating parallel implementations or architectural layers.
+Workflow behavior lives in the repository-root `deep_research.py`; model instructions live
+in `agent_instructions.py`; custom tool definitions and implementations live in
+`agent_tools.py`. New releases evolve these focused files instead of creating parallel
+implementations or architectural layers.
 
 ### Use the simplest adequate representation
 
@@ -78,7 +80,7 @@ APIs, and research results change.
 The project succeeds when:
 
 - each tagged release is complete, understandable, and manually verified;
-- the current runtime can be understood by reading two focused Python files;
+- the current runtime can be understood by reading three focused Python files;
 - a user can watch the complete workflow and read the final report in the terminal;
 - the final report is distinguishable from unsupported model recall;
 - each major mechanism has a clear learning question and an observable effect;

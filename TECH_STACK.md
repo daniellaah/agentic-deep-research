@@ -11,6 +11,7 @@ it.
 - **Language:** Python 3.12
 - **Environment and dependency management:** uv
 - **Workflow runtime:** `deep_research.py` at the repository root
+- **Model instructions:** `agent_instructions.py` at the repository root
 - **Custom tools:** `agent_tools.py` at the repository root
 - **Execution model:** synchronous Python until concurrency is required
 - **Default implementation preference:** Python standard library before new dependencies
@@ -31,21 +32,35 @@ only when a concrete release becomes easier to understand with them.
 The model name is configuration rather than a hard-coded project decision. This keeps the
 learning code stable while model availability changes.
 
-### Release 0.3.0 state
+### Release 0.4.0 state
 
-The runtime begins with an explicit synchronous `agent_loop` in which the model can select
-simple Tavily web search and arXiv paper search functions. The loop owns an ordered
-in-memory history and enforces model-turn and tool-call limits. Its final research notes
-become the evidence input to the existing explicit Write, Critic, and Revise calls.
+The runtime begins with one static planner call. Pydantic 2 defines `ResearchPlan` and
+`ResearchTask` at that model-generated boundary, and the official SDK's
+`client.responses.parse` validates the configured Structured Outputs response. The
+validated plan contains one through four ordered tasks, remains immutable, and is printed
+before research starts.
 
-Every request remains stateless and uses `store=False`. The provider primitive is the thin
-`llm_call(client, model_name, instructions, model_input, tools=None) -> Response` function,
-which returns the official SDK `Response` without wrapping it. `research_workflow` owns the
-Agent and three report stages, while `main` owns the CLI harness, client construction, and
-top-level error handling and prints the final report. `agent_tools.py` owns the tool
-schemas, functions, and dispatch.
+The application then invokes the existing synchronous `agent_loop` once per task in plan
+order. Each invocation owns fresh in-memory history and independent model-turn and
+tool-call limits. `execute_research_plan` owns that sequential loop, keeps returned notes in
+plan order, and returns their combined text. Only the original question and combined note
+text cross into the explicit Write, Critic, and Revise workflow.
+Task numbering, titles, and task-level failure context remain owned by
+`execute_research_plan`; they are not parameters or responsibilities of `agent_loop`.
 
-### Manual history from release 0.3.0
+Every request remains stateless and uses `store=False`. The thin `llm_call` provider
+primitive supports mutually exclusive custom tools or a Pydantic text format, accepts an
+optional tool choice for requests with tools, and returns the official SDK `Response`
+without wrapping it. Research uses `tool_choice="auto"` while tool budget remains. Its
+final request after budget exhaustion uses the same Research instructions and tools with
+`tool_choice="none"`, plus one application-owned input directing the model to return notes
+from existing evidence. `research_workflow` owns planning, sequential research, and the
+three report stages. `main` owns the CLI harness, client construction, top-level error
+handling, and final report output. `agent_instructions.py` owns the plain instruction and
+model-input constants for every model-facing stage. `agent_tools.py` owns the tool schemas,
+functions, and dispatch.
+
+### Manual history retained from release 0.3.0
 
 The explicit `agent_loop` invokes `llm_call` repeatedly and maintains one ordered
 `input_items` list in application memory:
@@ -120,9 +135,11 @@ runs/<run-id>/
 ```
 
 Release 0.2.0 adds `draft.md` and `critique.md` as visible intermediate workflow artifacts.
-Release 0.3.0 removes file output to keep the first Agent release focused. Research notes,
-draft, critique, and final report remain in memory. The CLI prints progress and the final
-Markdown report. It does not create a run directory.
+Release 0.3.0 removes file output to keep the first Agent release focused. Release 0.4.0
+keeps the validated plan, task-scoped notes, draft, critique, and final report in memory.
+The CLI uses consistent plain-text sections to print progress, the plan, every task's
+notes, the combined research notes, the draft, the critique, and the final Markdown report.
+It does not create a run directory.
 
 Later releases may add artifacts only when their specifications require them. Historical
 generated artifacts remain local and ignored by Git.
@@ -142,19 +159,19 @@ Current variables:
 
 ## Data Representation
 
-Starting in release 0.3.0, use plain dictionaries and lists for Responses API history and
-tool results while they remain easy to understand.
+Use plain dictionaries and lists for Responses API history, tool results, and task-result
+collections while they remain easy to understand.
 
-Introduce a named data structure only when repeated validation or invariants make the
-plain representation harder to follow. Pydantic may validate model-generated planning,
-brief, decision, or result structures at explicit boundaries, but should not replace plain
-internal history data merely for consistency.
+Release 0.4.0 adds Pydantic 2 only for the model-generated `ResearchPlan` and
+`ResearchTask` boundary, where bounded list sizes, required non-empty strings, and forbidden
+extra fields are runtime invariants. Pydantic should not replace plain internal history or
+task-result data merely for consistency.
 
 ## Quality Checks
 
-Release 0.3.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
-its specification. Ruff, mypy, and an automated test suite are intentionally omitted while
-the learning runtime is kept minimal.
+Release 0.4.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
+its specification. Ruff, mypy, and an automated test suite remain intentionally omitted
+while the learning runtime is kept minimal.
 
 ## Dependency Policy
 
@@ -165,5 +182,5 @@ A dependency is acceptable only when:
 3. the dependency does not introduce a framework that owns the agent loop; and
 4. its purpose is recorded in this document.
 
-The project currently depends on the OpenAI SDK, `python-dotenv`, `tavily-python`, and
-`requests` at runtime.
+The project currently depends on the OpenAI SDK, Pydantic 2, `python-dotenv`,
+`tavily-python`, and `requests` at runtime.

@@ -8,6 +8,7 @@ written before implementation and remains the acceptance reference for its relea
 - [v0.1.0 — One Responses API Call](v0.1.0-single-response.md) — Released
 - [v0.2.0 — Fixed Write-Critic-Revise Workflow](v0.2.0-report-refinement.md) — Verified
 - [v0.3.0 — Tool-Using Research Agent](v0.3.0-tool-research-agent.md) — Verified
+- [v0.4.0 — Static Structured Research Planning](v0.4.0-static-research-planning.md) — Verified
 
 ## Required Sections
 

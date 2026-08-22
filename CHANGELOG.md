@@ -6,6 +6,30 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-22
+
+### Added
+
+- Added a one-shot Pydantic-validated research plan before tool-using research.
+- Added visible ordered plan tasks and completion criteria.
+- Added sequential task execution with fresh Responses API history and independent Agent
+  limits for every task.
+- Added combined research notes as the evidence input to Write, Critic, and Revise without
+  exposing plan or task metadata to the report stages.
+- Added `agent_instructions.py` as the single home for model-stage instructions and
+  application-owned model input text.
+
+### Changed
+
+- Expanded terminal progress from four stages to Plan, Research, Write, Critic, and Revise.
+- Added Pydantic as a direct runtime dependency and updated the project version to 0.4.0.
+- Expanded the Plan, Research, Write, Critic, and Revise instructions with explicit
+  evidence, scope, and output-boundary requirements.
+- Replaced the separate Research synthesis instructions with a budget-exhausted input and
+  a final Research request using `tool_choice="none"`.
+- Kept the static plan immutable and deferred approval, replanning, adaptive supervision,
+  and concurrency to later releases.
+
 ## [0.3.0] - 2026-08-22
 
 ### Added
