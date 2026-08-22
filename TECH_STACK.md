@@ -32,21 +32,23 @@ only when a concrete release becomes easier to understand with them.
 The model name is configuration rather than a hard-coded project decision. This keeps the
 learning code stable while model availability changes.
 
-### Release 0.4.0 state
+### Release 0.5.0 state
 
-The runtime begins with one static planner call. Pydantic 2 defines `ResearchPlan` and
-`ResearchTask` at that model-generated boundary, and the official SDK's
-`client.responses.parse` validates the configured Structured Outputs response. The
-validated plan contains one through four ordered tasks, remains immutable, and is printed
-before research starts.
+The runtime begins with a bounded Scope stage. Pydantic 2 defines
+`ClarificationAssessment` and `ResearchBrief`, and the official SDK's
+`client.responses.parse` validates both Structured Outputs boundaries. Scope always makes
+one clarification-assessment request and one initial-brief request. It may ask at most
+three questions in one round and may make one replacement-brief request after a user
+revision. Standard-library terminal input collects answers and explicit approval; invalid
+local input repeats only the current prompt without making another model request.
 
-The application then invokes the existing synchronous `agent_loop` once per task in plan
-order. Each invocation owns fresh in-memory history and independent model-turn and
-tool-call limits. `execute_research_plan` owns that sequential loop, keeps returned notes in
-plan order, and returns their combined text. Only the original question and combined note
-text cross into the explicit Write, Critic, and Revise workflow.
-Task numbering, titles, and task-level failure context remain owned by
-`execute_research_plan`; they are not parameters or responsibilities of `agent_loop`.
+Planning cannot begin until the user approves a validated brief. The application renders
+that exact brief once and passes only the rendered approved brief into the existing static
+planner, task research, Write, Critic, and Revise. The original question, clarification
+artifacts, superseded brief, revision request, and approval commands remain isolated inside
+Scope. The `ResearchPlan` and `ResearchTask` schemas, immutable plan behavior, sequential
+task execution, fresh task histories, and independent model-turn and tool-call limits
+remain unchanged from release 0.4.0.
 
 Every request remains stateless and uses `store=False`. The thin `llm_call` provider
 primitive supports mutually exclusive custom tools or a Pydantic text format, accepts an
@@ -54,11 +56,11 @@ optional tool choice for requests with tools, and returns the official SDK `Resp
 without wrapping it. Research uses `tool_choice="auto"` while tool budget remains. Its
 final request after budget exhaustion uses the same Research instructions and tools with
 `tool_choice="none"`, plus one application-owned input directing the model to return notes
-from existing evidence. `research_workflow` owns planning, sequential research, and the
-three report stages. `main` owns the CLI harness, client construction, top-level error
-handling, and final report output. `agent_instructions.py` owns the plain instruction and
-model-input constants for every model-facing stage. `agent_tools.py` owns the tool schemas,
-functions, and dispatch.
+from existing evidence. `research_workflow` owns scoping, planning, sequential research,
+and the three report stages. `main` owns the CLI harness, client construction, top-level
+error handling, and final report output. `agent_instructions.py` owns the plain instruction
+and model-input constants for every model-facing stage. `agent_tools.py` owns the tool
+schemas, functions, and dispatch.
 
 ### Manual history retained from release 0.3.0
 
@@ -116,9 +118,11 @@ The invocation shape is:
 uv run deep_research.py "Question"
 ```
 
-The CLI has one initial question and emits concise live progress. It does not accept
-mid-run input until the scoping release introduces bounded clarification and an explicit
-ResearchBrief approval point.
+The CLI has one initial question and emits concise live progress. Release 0.5.0 adds one
+bounded mid-run intake flow: optional clarification answers, explicit ResearchBrief
+approval or cancellation, and at most one revision request followed by final approval.
+Local input validation may repeat the current prompt, but it cannot create another model
+clarification round or brief revision.
 
 The first release uses plain terminal text and the standard library. `python-dotenv` is
 limited to loading local `.env` configuration. A terminal rendering dependency may be
@@ -136,10 +140,11 @@ runs/<run-id>/
 
 Release 0.2.0 adds `draft.md` and `critique.md` as visible intermediate workflow artifacts.
 Release 0.3.0 removes file output to keep the first Agent release focused. Release 0.4.0
-keeps the validated plan, task-scoped notes, draft, critique, and final report in memory.
-The CLI uses consistent plain-text sections to print progress, the plan, every task's
-notes, the combined research notes, the draft, the critique, and the final Markdown report.
-It does not create a run directory.
+keeps the validated plan and report-stage values in memory. Release 0.5.0 also keeps the
+clarification assessment, answers, pending and approved briefs, and approval state in
+memory. The CLI uses consistent plain-text sections to print progress, clarification
+questions, pending briefs, the plan, every task's notes, combined research notes, draft,
+critique, and final Markdown report. It does not create a run directory.
 
 Later releases may add artifacts only when their specifications require them. Historical
 generated artifacts remain local and ignored by Git.
@@ -162,14 +167,15 @@ Current variables:
 Use plain dictionaries and lists for Responses API history, tool results, and task-result
 collections while they remain easy to understand.
 
-Release 0.4.0 adds Pydantic 2 only for the model-generated `ResearchPlan` and
-`ResearchTask` boundary, where bounded list sizes, required non-empty strings, and forbidden
-extra fields are runtime invariants. Pydantic should not replace plain internal history or
-task-result data merely for consistency.
+Pydantic 2 validates only model-generated application boundaries:
+`ClarificationAssessment`, `ResearchBrief`, `ResearchPlan`, and `ResearchTask`. Bounded list
+sizes, required non-empty strings, and forbidden extra fields are runtime invariants.
+Clarification answers, approval state, Responses API histories, and task-result collections
+remain plain strings, lists, and dictionaries.
 
 ## Quality Checks
 
-Release 0.4.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
+Release 0.5.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
 its specification. Ruff, mypy, and an automated test suite remain intentionally omitted
 while the learning runtime is kept minimal.
 

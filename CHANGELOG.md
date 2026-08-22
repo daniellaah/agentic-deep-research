@@ -6,6 +6,25 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added one bounded Scope stage that detects material ambiguity and asks at most three
+  clarification questions in one round.
+- Added a Pydantic-validated `ResearchBrief` with explicit objective, audience, scope,
+  exclusions, time horizon, source preferences, output requirements, and success criteria.
+- Added explicit brief approval, cancellation, and one optional revision with final
+  approval before planning can begin.
+- Added local input validation that repeats only the current prompt without consuming a
+  model call or expanding the bounded Scope workflow.
+
+### Changed
+
+- Expanded terminal progress from five stages to Scope, Plan, Research, Write, Critic, and
+  Revise.
+- Replaced the original question with the approved brief as the sole contract passed into
+  planning, task research, drafting, critique, and final revision.
+- Updated the project version and arXiv `User-Agent` to 0.5.0 without adding a dependency.
+
 ## [0.4.0] - 2026-08-22
 
 ### Added

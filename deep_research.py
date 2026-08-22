@@ -1,4 +1,4 @@
-"""Plan and run tool-using research before refining a final report."""
+"""Scope, plan, and run tool-using research before refining a final report."""
 
 import argparse
 import json
@@ -11,6 +11,9 @@ from openai import OpenAI
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from agent_instructions import (
+    BRIEF_INSTRUCTIONS,
+    BRIEF_REVISION_INSTRUCTIONS,
+    CLARIFICATION_INSTRUCTIONS,
     CRITIC_INSTRUCTIONS,
     PLANNING_INSTRUCTIONS,
     RESEARCH_BUDGET_EXHAUSTED_INPUT,
@@ -22,13 +25,61 @@ from agent_tools import RESEARCH_TOOLS, execute_tool
 
 MAX_AGENT_ITERATIONS = 10
 MAX_TOOL_CALLS = 8
+MAX_LOCAL_INPUT_LENGTH = 2000
 OUTPUT_WIDTH = 80
 
 
+ClarificationQuestion = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=300),
+]
+BriefText = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=300),
+]
+BriefObjective = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=800),
+]
 CompletionCriterion = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=240),
 ]
+
+
+class RunCancelled(Exception):
+    """Stop a run after local input is cancelled or ends."""
+
+
+class ClarificationAssessment(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    questions: Annotated[
+        list[ClarificationQuestion],
+        Field(min_length=0, max_length=3),
+    ]
+
+
+class ResearchBrief(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    objective: BriefObjective
+    audience: BriefText
+    scope: Annotated[list[BriefText], Field(min_length=1, max_length=6)]
+    exclusions: Annotated[list[BriefText], Field(min_length=0, max_length=6)]
+    time_horizon: BriefText
+    source_preferences: Annotated[
+        list[BriefText],
+        Field(min_length=1, max_length=6),
+    ]
+    output_requirements: Annotated[
+        list[BriefText],
+        Field(min_length=1, max_length=6),
+    ]
+    success_criteria: Annotated[
+        list[BriefText],
+        Field(min_length=1, max_length=6),
+    ]
 
 
 class ResearchTask(BaseModel):
@@ -73,6 +124,28 @@ def print_block(title, content):
 
 def print_error(message):
     print(f"[ERROR] {message}", file=sys.stderr)
+
+
+def read_local_input(prompt, *, choices=None, max_length=None):
+    while True:
+        try:
+            value = input(prompt).strip()
+        except EOFError as error:
+            raise RunCancelled("Standard input ended before approval.") from error
+
+        if not value:
+            print("[INPUT] A non-empty response is required.")
+            continue
+        if max_length is not None and len(value) > max_length:
+            print(f"[INPUT] Response must be at most {max_length} characters.")
+            continue
+        if choices is not None:
+            normalized = value.lower()
+            if normalized not in choices:
+                print(f"[INPUT] Enter one of: {', '.join(choices)}.")
+                continue
+            return normalized
+        return value
 
 
 def task_count_text(task_count):
@@ -129,32 +202,257 @@ def output_text(response, stage):
     return response.output_text
 
 
-def parsed_research_plan(response):
+def parsed_structured_output(response, expected_type, stage):
     if response.status != "completed":
         incomplete_details = getattr(response, "incomplete_details", None)
         reason = getattr(incomplete_details, "reason", None)
         detail = f": {reason}" if reason else ""
-        raise RuntimeError(f"Plan response did not complete{detail}.")
+        raise RuntimeError(f"{stage} response did not complete{detail}.")
 
     for output in response.output:
         if output.type != "message":
             continue
         for content in output.content:
             if content.type == "refusal":
-                raise RuntimeError(f"Plan was refused: {content.refusal[:300]}")
+                raise RuntimeError(
+                    f"{stage} was refused: {content.refusal[:300]}"
+                )
 
-    plan = response.output_parsed
-    if not isinstance(plan, ResearchPlan):
-        raise TypeError("Plan returned no validated structured output.")
-    return plan
+    parsed_value = response.output_parsed
+    if not isinstance(parsed_value, expected_type):
+        raise TypeError(f"{stage} returned no validated structured output.")
+    return parsed_value
 
 
-def create_research_plan(client, model_name, question):
+def assess_clarification(client, model_name, question):
+    response = llm_call(
+        client,
+        model_name,
+        CLARIFICATION_INSTRUCTIONS,
+        question,
+        text_format=ClarificationAssessment,
+    )
+    return parsed_structured_output(
+        response,
+        ClarificationAssessment,
+        "Clarification assessment",
+    )
+
+
+def print_clarification_questions(assessment):
+    content = "\n".join(
+        f"{number}. {question}"
+        for number, question in enumerate(assessment.questions, start=1)
+    )
+    print_block("CLARIFICATION QUESTIONS", content)
+
+
+def collect_clarification_answers(assessment):
+    answers = []
+    question_count = len(assessment.questions)
+    for number in range(1, question_count + 1):
+        answers.append(
+            read_local_input(
+                f"Answer {number}/{question_count}: ",
+                max_length=MAX_LOCAL_INPUT_LENGTH,
+            )
+        )
+    return answers
+
+
+def clarification_input(question, assessment, answers):
+    lines = ["## Original question", "", question]
+    if not assessment.questions:
+        lines.extend(["", "## Clarification", "", "No clarification was required."])
+        return "\n".join(lines)
+
+    lines.extend(["", "## Clarification questions and answers", ""])
+    for number, (clarification_question, answer) in enumerate(
+        zip(assessment.questions, answers, strict=True),
+        start=1,
+    ):
+        lines.append(f"{number}. Question: {clarification_question}")
+        lines.append(f"   Answer: {answer}")
+    return "\n".join(lines)
+
+
+def markdown_list(items):
+    visible_items = items or ["None specified."]
+    return "\n".join(f"- {item}" for item in visible_items)
+
+
+def format_research_brief(brief):
+    return f"""
+## Objective
+
+{brief.objective}
+
+## Audience
+
+{brief.audience}
+
+## Scope
+
+{markdown_list(brief.scope)}
+
+## Exclusions
+
+{markdown_list(brief.exclusions)}
+
+## Time horizon
+
+{brief.time_horizon}
+
+## Source preferences
+
+{markdown_list(brief.source_preferences)}
+
+## Output requirements
+
+{markdown_list(brief.output_requirements)}
+
+## Success criteria
+
+{markdown_list(brief.success_criteria)}
+""".strip()
+
+
+def create_research_brief(client, model_name, question, assessment, answers):
+    response = llm_call(
+        client,
+        model_name,
+        BRIEF_INSTRUCTIONS,
+        clarification_input(question, assessment, answers),
+        text_format=ResearchBrief,
+    )
+    return parsed_structured_output(response, ResearchBrief, "Research brief")
+
+
+def revise_research_brief(
+    client,
+    model_name,
+    question,
+    assessment,
+    answers,
+    brief,
+    revision_request,
+):
+    model_input = f"""
+{clarification_input(question, assessment, answers)}
+
+## Current research brief
+
+{format_research_brief(brief)}
+
+## Revision request
+
+{revision_request}
+""".strip()
+    response = llm_call(
+        client,
+        model_name,
+        BRIEF_REVISION_INSTRUCTIONS,
+        model_input,
+        text_format=ResearchBrief,
+    )
+    return parsed_structured_output(
+        response,
+        ResearchBrief,
+        "Research brief revision",
+    )
+
+
+def scope_research(client, model_name, question):
+    print_progress(
+        "Scope",
+        "Clarification assessment",
+        "started",
+        indent=1,
+    )
+    assessment = assess_clarification(client, model_name, question)
+    question_count = len(assessment.questions)
+    print_progress(
+        "Scope",
+        "Clarification assessment",
+        "completed",
+        f"{question_count} question{'s' if question_count != 1 else ''}",
+        indent=1,
+    )
+
+    if assessment.questions:
+        print_clarification_questions(assessment)
+        answers = collect_clarification_answers(assessment)
+    else:
+        print_progress(
+            "Scope",
+            "Clarification",
+            "not required",
+            indent=1,
+        )
+        answers = []
+
+    print_progress("Scope", "Research brief", "started", indent=1)
+    brief = create_research_brief(
+        client,
+        model_name,
+        question,
+        assessment,
+        answers,
+    )
+    print_progress("Scope", "Research brief", "completed", indent=1)
+    print_block(
+        "RESEARCH BRIEF | PENDING APPROVAL",
+        format_research_brief(brief),
+    )
+
+    action = read_local_input(
+        "Action [approve/revise/cancel]: ",
+        choices=("approve", "revise", "cancel"),
+    )
+    if action == "cancel":
+        raise RunCancelled("Research brief approval was cancelled.")
+    if action == "approve":
+        return brief
+
+    revision_request = read_local_input(
+        "Revision request: ",
+        max_length=MAX_LOCAL_INPUT_LENGTH,
+    )
+    print_progress("Scope", "Research brief revision", "started", indent=1)
+    revised_brief = revise_research_brief(
+        client,
+        model_name,
+        question,
+        assessment,
+        answers,
+        brief,
+        revision_request,
+    )
+    print_progress("Scope", "Research brief revision", "completed", indent=1)
+    print_block(
+        "RESEARCH BRIEF | PENDING FINAL APPROVAL",
+        format_research_brief(revised_brief),
+    )
+
+    final_action = read_local_input(
+        "Action [approve/cancel]: ",
+        choices=("approve", "cancel"),
+    )
+    if final_action == "cancel":
+        raise RunCancelled("Final research brief approval was cancelled.")
+    return revised_brief
+
+
+def parsed_research_plan(response):
+    return parsed_structured_output(response, ResearchPlan, "Plan")
+
+
+def create_research_plan(client, model_name, research_brief):
     response = llm_call(
         client,
         model_name,
         PLANNING_INSTRUCTIONS,
-        question,
+        research_brief,
         text_format=ResearchPlan,
     )
     return parsed_research_plan(response)
@@ -173,12 +471,12 @@ def print_research_plan(plan):
     print_block("RESEARCH PLAN", "\n".join(lines))
 
 
-def task_input(question, task_number, task):
+def task_input(research_brief, task_number, task):
     criteria = "\n".join(f"- {criterion}" for criterion in task.completion_criteria)
     return f"""
-## Original question
+## Approved research brief
 
-{question}
+{research_brief}
 
 ## Current task {task_number}: {task.title}
 
@@ -308,7 +606,13 @@ def agent_loop(
     )
 
 
-def execute_research_plan(client, model_name, question, plan, tavily_api_key):
+def execute_research_plan(
+    client,
+    model_name,
+    research_brief,
+    plan,
+    tavily_api_key,
+):
     task_notes = []
     task_count = len(plan.tasks)
     for task_number, task in enumerate(plan.tasks, start=1):
@@ -322,7 +626,7 @@ def execute_research_plan(client, model_name, question, plan, tavily_api_key):
             notes = agent_loop(
                 client,
                 model_name,
-                task_input(question, task_number, task),
+                task_input(research_brief, task_number, task),
                 tavily_api_key,
             )
         except Exception as error:
@@ -345,29 +649,34 @@ def execute_research_plan(client, model_name, question, plan, tavily_api_key):
 
 
 def research_workflow(client, model_name, question, tavily_api_key):
-    print_progress("1/5", "Plan", "started")
-    plan = create_research_plan(client, model_name, question)
+    print_progress("1/6", "Scope", "started")
+    brief = scope_research(client, model_name, question)
+    research_brief = format_research_brief(brief)
+    print_progress("1/6", "Scope", "completed", "research brief approved")
+
+    print_progress("2/6", "Plan", "started")
+    plan = create_research_plan(client, model_name, research_brief)
     task_count = len(plan.tasks)
-    print_progress("1/5", "Plan", "completed", task_count_text(task_count))
+    print_progress("2/6", "Plan", "completed", task_count_text(task_count))
     print_research_plan(plan)
 
-    print_progress("2/5", "Research", "started", task_count_text(task_count))
+    print_progress("3/6", "Research", "started", task_count_text(task_count))
     research_notes = execute_research_plan(
         client,
         model_name,
-        question,
+        research_brief,
         plan,
         tavily_api_key,
     )
-    print_progress("2/5", "Research", "completed", task_count_text(task_count))
+    print_progress("3/6", "Research", "completed", task_count_text(task_count))
     print_block("COMBINED RESEARCH NOTES", research_notes)
 
-    print_progress("3/5", "Write", "started")
+    print_progress("4/6", "Write", "started")
     context = f"""
 
-## Original question
+## Approved research brief
 
-{question}
+{research_brief}
 
 ## Research notes
 
@@ -376,10 +685,10 @@ def research_workflow(client, model_name, question, tavily_api_key):
     draft = output_text(
         llm_call(client, model_name, WRITE_INSTRUCTIONS, context), "Write"
     )
-    print_progress("3/5", "Write", "completed")
+    print_progress("4/6", "Write", "completed")
     print_block("DRAFT", draft)
 
-    print_progress("4/5", "Critic", "started")
+    print_progress("5/6", "Critic", "started")
     context += f"""
 
 ## Draft
@@ -389,10 +698,10 @@ def research_workflow(client, model_name, question, tavily_api_key):
     critique = output_text(
         llm_call(client, model_name, CRITIC_INSTRUCTIONS, context), "Critic"
     )
-    print_progress("4/5", "Critic", "completed")
+    print_progress("5/6", "Critic", "completed")
     print_block("CRITIQUE", critique)
 
-    print_progress("5/5", "Revise", "started")
+    print_progress("6/6", "Revise", "started")
     context += f"""
 
 ## Critique
@@ -403,13 +712,15 @@ def research_workflow(client, model_name, question, tavily_api_key):
     final_report = output_text(
         llm_call(client, model_name, REVISE_INSTRUCTIONS, context), "Revise"
     )
-    print_progress("5/5", "Revise", "completed")
+    print_progress("6/6", "Revise", "completed")
     return final_report
 
 
 def parse_question():
     parser = argparse.ArgumentParser(
-        description="Plan and run tool-using research, then refine its report.",
+        description=(
+            "Scope, plan, and run tool-using research, then refine its report."
+        ),
     )
     parser.add_argument("question", help="Research question to investigate")
     return parser.parse_args().question.strip()
@@ -452,6 +763,9 @@ def main():
         print_block("FINAL REPORT", final_report)
         print_progress("Run", "Deep research", "completed")
         return 0
+    except RunCancelled as error:
+        print_progress("Run", "Deep research", "cancelled", str(error))
+        return 1
     except Exception as error:
         print_error(f"Run failed: {error}")
         return 1

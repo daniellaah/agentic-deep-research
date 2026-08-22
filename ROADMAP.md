@@ -22,7 +22,7 @@ and kept as simple as its learning objective allows.
 | 0.2.0 | Fixed report-refinement workflow | Separate write, critic, and revise calls expose the value and limits of deterministic orchestration | Verified |
 | 0.3.0 | Tool-using research Agent | A visible custom tool loop searches the web and arXiv, then produces a source-grounded report through write, critic, and revise stages | Verified |
 | 0.4.0 | Static structured planning | A one-shot planner creates a validated research plan that the research Agent executes sequentially | Verified |
-| 0.5.0 | Scoping and ResearchBrief | Bounded clarification and user approval establish an explicit research contract before planning | Planned |
+| 0.5.0 | Scoping and ResearchBrief | Bounded clarification and user approval establish an explicit research contract before planning | Verified |
 | 0.6.0 | Adaptive supervisor-worker research | A supervisor repeatedly observes shared research state and delegates one next task to an isolated worker until sufficient or budget-limited | Planned |
 | 0.7.0 | Bounded parallel research | The supervisor dispatches independent worker tasks concurrently while preserving budgets, provenance, and failure visibility | Planned |
 | Later | Advanced deep-research reliability and scale | Later mechanisms are selected from failures observed in the implemented releases | Direction |
