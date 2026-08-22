@@ -6,8 +6,16 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added a fixed three-stage write-critic-revise workflow with explicit progress output.
+- Added inspectable `draft.md` and `critique.md` artifacts alongside the final report.
+- Added the v0.2.0 release specification and its partial-artifact failure contract.
+
 ### Changed
 
+- Updated report generation from one model call to three stateless Responses API calls
+  with explicit stage inputs.
 - Reworked the near-term roadmap around fixed report refinement, observable research
   tools, static planning, scoping, adaptive supervision, and bounded parallel workers.
 - Defined the required release-specification reading workflow and replaced persistent

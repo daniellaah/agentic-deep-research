@@ -30,16 +30,18 @@ only when a concrete release becomes easier to understand with them.
 The model name is configuration rather than a hard-coded project decision. This keeps the
 learning code stable while model availability changes.
 
-### Release 0.1.0 state
+### Release 0.2.0 state
 
-The first release makes exactly one Responses API call. It has no tool, loop, conversation
-history, or structured trace.
+The runtime makes three Responses API calls in one fixed write-critic-revise workflow. It
+has no tool, Agent loop, conversation history, or structured trace. Each request is
+stateless and uses `store=False`; the application passes the question and generated text
+needed by the next stage as explicit input.
 
-The provider primitive is the thin
-`llm_call(client, model_name, model_input) -> Response` function. It returns the official
-SDK `Response` without wrapping it, while `main` owns the CLI harness and invokes
-`llm_call` once. Release 0.2.0 will reuse this primitive in three explicit fixed workflow
-stages. Release 0.3.0 will place the first `agent_loop` around it.
+The provider primitive is the thin `llm_call(client, model_name, instructions,
+model_input) -> Response` function. It returns the official SDK `Response` without wrapping
+it. `research_workflow` owns the three explicit stage calls and returns the final report
+and its path, while `main` owns the CLI harness, client construction, and top-level error
+handling. Release 0.3.0 will place the first `agent_loop` around this provider boundary.
 
 ### Manual history from release 0.3.0
 

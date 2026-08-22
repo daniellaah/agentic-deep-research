@@ -6,16 +6,17 @@
 [![CI](https://github.com/daniellaah/agentic-deep-research/actions/workflows/ci.yml/badge.svg)](https://github.com/daniellaah/agentic-deep-research/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-An observable deep-research agent that plans investigations, searches the web and
-academic literature, verifies evidence and citations, and produces source-grounded
-reports.
+A learning-oriented deep-research CLI that adds model and Agent mechanisms one observable
+release at a time. The current release exposes a deterministic write-critic-revise
+workflow before research tools and an autonomous Agent loop are introduced.
 
 ## Core Features
 
 - Accepts a research question through a single CLI command.
-- Generates a report with one synchronous OpenAI Responses API request.
-- Shows request progress and the generated report in the terminal.
-- Saves every successful report in a unique run directory.
+- Runs an explicit write-critic-revise workflow with three synchronous Responses API
+  requests.
+- Shows each fixed stage's progress and the final report in the terminal.
+- Saves the draft, critique, and final report in a unique run directory.
 - Loads credentials and model selection from environment variables.
 - Keeps the complete runtime in one Python file.
 
@@ -73,12 +74,19 @@ uv run deep_research.py --help
 
 ## Generated Output
 
-The command prints progress and the generated report directly in the terminal:
+The command prints stage progress and the final report directly in the terminal:
 
 ```text
-Model request started: <model-name>
-Model response received.
-<generated report>
+[1/3] Write started: <model-name>
+[1/3] Write completed: runs/<run-id>/draft.md
+[2/3] Critic started: <model-name>
+[2/3] Critic completed: runs/<run-id>/critique.md
+[3/3] Revise started: <model-name>
+[3/3] Revise completed: runs/<run-id>/report.md
+
+Final report:
+<final report>
+
 Report written: runs/<run-id>/report.md
 Run completed.
 ```
@@ -87,6 +95,8 @@ Each successful run creates the following directory under the repository root:
 
 ```text
 runs/<run-id>/
+├── draft.md
+├── critique.md
 └── report.md
 ```
 
@@ -106,15 +116,18 @@ the process environment take precedence over values in `.env`.
 
 ```text
 Research question
-    → OpenAI Responses API
-    → response.output_text
+    → Write
+    → Critic
+    → Revise
     → terminal output
-    → runs/<run-id>/report.md
+    → runs/<run-id>/{draft,critique,report}.md
 ```
 
-The runtime validates the question and configuration, makes one model request, reads the
-response text, and writes it to a Markdown report. API and artifact failures produce a
-concise error and a nonzero exit code.
+The runtime validates the question and configuration, then makes three explicit model
+requests. The writer receives the question, the critic receives the question and draft,
+and the reviser receives the question, draft, and critique. Each request is stateless and
+the application passes only the text needed by the next stage. API and artifact failures
+stop the workflow, produce a concise error, and return a nonzero exit code.
 
 ## Project Structure
 

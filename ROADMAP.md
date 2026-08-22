@@ -19,7 +19,7 @@ and kept as simple as its learning objective allows.
 | Version | Primary mechanism | Observable outcome | Status |
 | --- | --- | --- | --- |
 | 0.1.0 | One Responses API call | One question produces live progress and a Markdown report | Released |
-| 0.2.0 | Fixed report-refinement workflow | Separate write, critic, and revise calls expose the value and limits of deterministic orchestration | Planned |
+| 0.2.0 | Fixed report-refinement workflow | Separate write, critic, and revise calls expose the value and limits of deterministic orchestration | Verified |
 | 0.3.0 | Tool-using research Agent | A visible custom tool loop searches the web and arXiv, records a structured trace, and produces a source-grounded report | Planned |
 | 0.4.0 | Static structured planning | A one-shot planner creates a validated research plan that the research Agent executes sequentially | Planned |
 | 0.5.0 | Scoping and ResearchBrief | Bounded clarification and user approval establish an explicit research contract before planning | Planned |
