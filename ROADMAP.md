@@ -7,8 +7,8 @@ design unchanged. Each release adds one primary mechanism to the same small runn
 program and should make that mechanism observable without hiding it behind an agent
 framework.
 
-Near-term releases through 0.7.0 are concrete enough to guide specifications. Work beyond
-0.7.0 is intentionally described as one broad direction and will be divided into releases
+Near-term releases through 0.8.0 are concrete enough to guide specifications. Work beyond
+0.8.0 is intentionally described as one broad direction and will be divided into releases
 only after earlier runs and reports reveal the next useful learning problems.
 
 Every release must be specified before implementation, manually verified before tagging,
@@ -23,8 +23,9 @@ and kept as simple as its learning objective allows.
 | 0.3.0 | Tool-using research Agent | A visible custom tool loop searches the web and arXiv, then produces a source-grounded report through write, critic, and revise stages | Verified |
 | 0.4.0 | Static structured planning | A one-shot planner creates a validated research plan that the research Agent executes sequentially | Verified |
 | 0.5.0 | Scoping and ResearchBrief | Bounded clarification and user approval establish an explicit research contract before planning | Verified |
-| 0.6.0 | Adaptive supervisor-worker research | A supervisor repeatedly observes shared research state and delegates one next task to an isolated worker until sufficient or budget-limited | Planned |
-| 0.7.0 | Bounded parallel research | The supervisor dispatches independent worker tasks concurrently while preserving budgets, provenance, and failure visibility | Planned |
+| 0.6.0 | Explicit Agent harness and handoffs | Named specialist Agents run through an application-owned harness and exchange visible, bounded handoff artifacts without changing the v0.5.0 workflow policy | Planned |
+| 0.7.0 | Adaptive supervisor-worker research | A supervisor repeatedly observes shared research state and delegates one next task to an isolated worker until sufficient or budget-limited | Planned |
+| 0.8.0 | Bounded parallel research | The supervisor dispatches independent worker tasks concurrently while preserving budgets, provenance, and failure visibility | Planned |
 | Later | Advanced deep-research reliability and scale | Later mechanisms are selected from failures observed in the implemented releases | Direction |
 
 ## Phase 1: Model and Workflow Foundations
@@ -124,9 +125,50 @@ question -> scoping -> ResearchBrief approval -> static plan -> research -> repo
 This is the first release with mid-run user interaction. It remains a bounded research
 intake flow rather than an open-ended chat experience.
 
-## Phase 3: Adaptive Research
+## Phase 3: Explicit Multi-Agent Foundations
 
-### 0.6.0 — Adaptive Supervisor-Worker Research
+### 0.6.0 — Explicit Agent Harness and Handoffs
+
+Refactor the model-backed roles into an explicit, inspectable multi-agent architecture while
+preserving the approved v0.5.0 workflow behavior:
+
+```text
+Scope controller
+    -> Clarification Agent
+    -> Brief Agent
+    -> approved ResearchBrief handoff
+    -> Planner Agent
+    -> Research Agent per task
+    -> Writer Agent
+    -> Critic Agent
+    -> Reviser Agent
+    -> final report
+```
+
+- define every specialist with an explicit name, instructions, input contract, output contract,
+  tool policy, and execution limits;
+- add a small application-owned Agent harness that runs structured-output, text-output, and
+  tool-using Agents through the Responses API without hiding the existing custom tool loop;
+- represent each transfer of control and context as an explicit handoff with a named sender,
+  receiver, and bounded artifact such as `ResearchBrief`, `ResearchPlan`, task input, research
+  result, draft, or critique;
+- keep the human approval and revision interaction in a deterministic Scope controller rather
+  than pretending local CLI input is autonomous Agent behavior;
+- keep execution synchronous and deterministic so Agent identity, context isolation, and
+  handoff boundaries can be compared directly with the v0.5.0 function workflow; and
+- show the active Agent and each handoff in terminal progress while deferring structured tracing,
+  output evaluation, adaptive delegation, and concurrency.
+
+This release continues to own orchestration directly with the Responses API because its learning
+goal is to expose the harness and handoffs. The
+[official OpenAI comparison](https://developers.openai.com/api/docs/guides/agents#agents-sdk-vs-responses-api)
+describes the Responses API as the choice when the application should own custom loops and
+routing, while the Agents SDK owns the runner lifecycle and built-in handoffs. An Agents SDK
+comparison remains a later learning step after the explicit mechanism is observable.
+
+## Phase 4: Adaptive Multi-Agent Research
+
+### 0.7.0 — Adaptive Supervisor-Worker Research
 
 Replace the immutable static plan with a living, observation-driven research state:
 
@@ -158,16 +200,17 @@ are addressed, important gaps are exhausted, or another task has low expected va
 budgets remain authoritative. Workers execute sequentially in this release so adaptive
 delegation and context isolation can be understood before concurrency is introduced.
 
-### 0.7.0 — Bounded Parallel Research Workers
+### 0.8.0 — Bounded Parallel Research Workers
 
 Add concurrency only after the sequential supervisor-worker control loop is observable:
 
 - let the supervisor emit a bounded batch of independent research tasks;
 - execute workers concurrently under explicit global and per-worker limits;
-- keep each worker's context, tool budget, task identity, and trace branch isolated;
+- keep each worker's context, tool budget, task identity, and execution branch isolated;
 - merge results centrally into the shared evidence and task ledgers;
 - surface partial failures, retries, cancellations, overlap, and deduplication; and
-- preserve parent-child trace relationships and deterministic final synthesis inputs.
+- preserve parent-child task relationships in shared state and deterministic final synthesis
+  inputs.
 
 Parallelism is a scheduling optimization, not a new research policy. Dependent tasks stay
 sequential, and the system must retain a single-worker path for questions that do not
@@ -175,8 +218,8 @@ benefit from decomposition.
 
 ## Later Direction: Advanced Deep-Research Reliability and Scale
 
-After 0.7.0, improve evidence reliability, citation verification, long-horizon execution,
-recoverability, human collaboration, context management, and frontier architecture
-comparisons based on failures observed in the earlier releases. These capabilities remain
-unscheduled until the implemented runs, reports, costs, and failure modes provide a
-clear reason to split them into new specifications.
+After 0.8.0, improve evidence reliability, citation verification, long-horizon execution,
+recoverability, human collaboration, context management, structured tracing, repeatable
+evaluation, and frontier architecture comparisons based on failures observed in the earlier
+releases. These capabilities remain unscheduled until the implemented runs, reports, costs, and
+failure modes provide a clear reason to split them into new specifications.
