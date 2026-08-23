@@ -4,6 +4,8 @@ import argparse
 import json
 import os
 import sys
+from dataclasses import dataclass
+from enum import StrEnum
 from typing import Annotated
 
 from dotenv import load_dotenv
@@ -28,6 +30,7 @@ MAX_WORKER_TOOL_CALLS = 5
 MAX_RESEARCH_WORKERS = 4
 MAX_SUPERVISOR_OUTPUT_TOKENS = 4000
 MAX_LOCAL_INPUT_CHARACTERS = 2000
+MAX_AGENT_ERROR_CHARACTERS = 300
 OUTPUT_WIDTH = 80
 
 
@@ -49,8 +52,26 @@ EvidenceTarget = Annotated[
 ]
 
 
+class AgentRunStatus(StrEnum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class AgentTerminationReason(StrEnum):
+    COMPLETED = "completed"
+    TOOL_LIMIT = "tool_limit"
+    TURN_LIMIT = "turn_limit"
+    CONTEXT_LIMIT = "context_limit"
+    REFUSAL = "refusal"
+    MODEL_ERROR = "model_error"
+    TOOL_ERROR = "tool_error"
+    CANCELLED = "cancelled"
+
+
 class RunCancelled(Exception):
-    """Stop a run after local input is cancelled or ends."""
+    """Stop a run after application cancellation or local input ends."""
 
 
 class ClarificationAssessment(BaseModel):
@@ -110,6 +131,39 @@ class SupervisorDecision(BaseModel):
     ]
 
 
+@dataclass(frozen=True)
+class AgentRunRequest:
+    worker_number: int
+    approved_brief: str
+    task: ResearchTask
+
+
+@dataclass
+class AgentRunState:
+    request: AgentRunRequest
+    input_items: list
+    model_turns_used: int = 0
+    tool_calls_used: int = 0
+    status: AgentRunStatus = AgentRunStatus.RUNNING
+    termination_reason: AgentTerminationReason | None = None
+    notes: str | None = None
+    error_message: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentRunResult:
+    worker_number: int
+    task: ResearchTask
+    status: AgentRunStatus
+    termination_reason: AgentTerminationReason
+    notes: str | None
+    error_message: str | None
+    model_turns_used: int
+    model_turn_limit: int
+    tool_calls_used: int
+    tool_call_limit: int
+
+
 def print_progress(label, subject, status, detail=None, indent=0):
     message = f"{'  ' * indent}[{label}] {subject} | {status.upper()}"
     if detail:
@@ -153,6 +207,55 @@ def read_local_input(prompt, *, choices=None, max_length=None):
 def format_worker_count(worker_count):
     noun = "worker" if worker_count == 1 else "workers"
     return f"{worker_count} {noun}"
+
+
+def compact_agent_error(message):
+    compacted = " ".join(str(message).split())
+    if not compacted:
+        compacted = "Research Worker failed."
+    return compacted[:MAX_AGENT_ERROR_CHARACTERS]
+
+
+def format_model_exception(error):
+    details = [type(error).__name__]
+    status_code = getattr(error, "status_code", None)
+    if isinstance(status_code, int):
+        details.append(f"status {status_code}")
+    error_code = getattr(error, "code", None)
+    if isinstance(error_code, str) and error_code.strip():
+        details.append(f"code {error_code.strip()}")
+    return compact_agent_error(
+        f"Research model request failed ({', '.join(details)})."
+    )
+
+
+def format_response_failure(response):
+    status = getattr(response, "status", None) or "unknown"
+    details = [f"status {status}"]
+    incomplete_details = getattr(response, "incomplete_details", None)
+    incomplete_reason = getattr(incomplete_details, "reason", None)
+    if isinstance(incomplete_reason, str) and incomplete_reason.strip():
+        details.append(f"reason {incomplete_reason.strip()}")
+    response_error = getattr(response, "error", None)
+    error_code = getattr(response_error, "code", None)
+    if isinstance(error_code, str) and error_code.strip():
+        details.append(f"code {error_code.strip()}")
+    return compact_agent_error(
+        f"Research model response did not complete ({', '.join(details)})."
+    )
+
+
+def get_refusal_text(response):
+    output_items = getattr(response, "output", None)
+    if not isinstance(output_items, list):
+        return None
+    for output in output_items:
+        if getattr(output, "type", None) != "message":
+            continue
+        for content in getattr(output, "content", []):
+            if getattr(content, "type", None) == "refusal":
+                return getattr(content, "refusal", "")
+    return None
 
 
 def llm_call(
@@ -204,12 +307,9 @@ def require_output_text(response, stage):
         detail = f": {reason}" if reason else ""
         raise RuntimeError(f"{stage} response did not complete{detail}.")
 
-    for output in response.output:
-        if output.type != "message":
-            continue
-        for content in output.content:
-            if content.type == "refusal":
-                raise RuntimeError(f"{stage} was refused: {content.refusal[:300]}")
+    refusal = get_refusal_text(response)
+    if refusal is not None:
+        raise RuntimeError(f"{stage} was refused: {refusal[:300]}")
 
     if not response.output_text.strip():
         raise RuntimeError(f"{stage} returned no text.")
@@ -223,14 +323,9 @@ def require_structured_output(response, expected_type, stage):
         detail = f": {reason}" if reason else ""
         raise RuntimeError(f"{stage} response did not complete{detail}.")
 
-    for output in response.output:
-        if output.type != "message":
-            continue
-        for content in output.content:
-            if content.type == "refusal":
-                raise RuntimeError(
-                    f"{stage} was refused: {content.refusal[:300]}"
-                )
+    refusal = get_refusal_text(response)
+    if refusal is not None:
+        raise RuntimeError(f"{stage} was refused: {refusal[:300]}")
 
     parsed_value = response.output_parsed
     if not isinstance(parsed_value, expected_type):
@@ -470,6 +565,139 @@ Evidence targets:
 """.strip()
 
 
+def build_worker_input(request):
+    return f"""
+## Approved research brief
+
+{request.approved_brief}
+
+## Worker {request.worker_number} task
+
+{format_research_task(request.task)}
+""".strip()
+
+
+def initialize_agent_run_state(request):
+    if (
+        isinstance(request.worker_number, bool)
+        or not isinstance(request.worker_number, int)
+        or request.worker_number < 1
+    ):
+        raise ValueError("Agent run worker_number must be a positive integer.")
+    if not isinstance(request.approved_brief, str) or not request.approved_brief.strip():
+        raise ValueError("Agent run approved_brief must be a non-empty string.")
+    if not isinstance(request.task, ResearchTask):
+        raise TypeError("Agent run task must be a validated ResearchTask.")
+
+    return AgentRunState(
+        request=request,
+        input_items=[
+            {
+                "role": "user",
+                "content": build_worker_input(request),
+            }
+        ],
+    )
+
+
+def finalize_agent_run(
+    state,
+    status,
+    termination_reason,
+    *,
+    notes=None,
+    error_message=None,
+):
+    if state.status != AgentRunStatus.RUNNING:
+        raise ValueError("Agent run state has already been finalized.")
+    if (
+        state.termination_reason is not None
+        or state.notes is not None
+        or state.error_message is not None
+    ):
+        raise ValueError("Running Agent state contains terminal values.")
+    if not 0 <= state.model_turns_used <= MAX_WORKER_TURNS:
+        raise ValueError("Agent run model-turn usage is outside its limit.")
+    if not 0 <= state.tool_calls_used <= MAX_WORKER_TOOL_CALLS:
+        raise ValueError("Agent run tool-call usage is outside its limit.")
+    if not isinstance(status, AgentRunStatus) or status == AgentRunStatus.RUNNING:
+        raise ValueError("Agent run result requires a terminal status.")
+    if not isinstance(termination_reason, AgentTerminationReason):
+        raise TypeError("Agent run result requires a termination reason.")
+
+    allowed_reasons = {
+        AgentRunStatus.COMPLETED: {
+            AgentTerminationReason.COMPLETED,
+            AgentTerminationReason.TOOL_LIMIT,
+        },
+        AgentRunStatus.FAILED: {
+            AgentTerminationReason.TURN_LIMIT,
+            AgentTerminationReason.CONTEXT_LIMIT,
+            AgentTerminationReason.REFUSAL,
+            AgentTerminationReason.MODEL_ERROR,
+            AgentTerminationReason.TOOL_ERROR,
+        },
+        AgentRunStatus.CANCELLED: {
+            AgentTerminationReason.CANCELLED,
+        },
+    }
+    if termination_reason not in allowed_reasons[status]:
+        raise ValueError("Agent run status and termination reason are inconsistent.")
+
+    if status == AgentRunStatus.COMPLETED:
+        if not isinstance(notes, str) or not notes.strip():
+            raise ValueError("A completed Agent run requires non-empty notes.")
+        if error_message is not None:
+            raise ValueError("A completed Agent run cannot contain an error.")
+        final_notes = notes.strip()
+        final_error = None
+    else:
+        if notes is not None:
+            raise ValueError("An unsuccessful Agent run cannot contain notes.")
+        if not isinstance(error_message, str) or not error_message.strip():
+            raise ValueError("An unsuccessful Agent run requires an error message.")
+        final_notes = None
+        final_error = compact_agent_error(error_message)
+
+    if status != AgentRunStatus.CANCELLED and state.model_turns_used == 0:
+        raise ValueError("A non-cancelled Agent run must attempt a model turn.")
+
+    state.status = status
+    state.termination_reason = termination_reason
+    state.notes = final_notes
+    state.error_message = final_error
+    return AgentRunResult(
+        worker_number=state.request.worker_number,
+        task=state.request.task,
+        status=state.status,
+        termination_reason=state.termination_reason,
+        notes=state.notes,
+        error_message=state.error_message,
+        model_turns_used=state.model_turns_used,
+        model_turn_limit=MAX_WORKER_TURNS,
+        tool_calls_used=state.tool_calls_used,
+        tool_call_limit=MAX_WORKER_TOOL_CALLS,
+    )
+
+
+def print_agent_run_result(result):
+    lines = [
+        f"Status: {result.status.value}",
+        f"Termination reason: {result.termination_reason.value}",
+        f"Model turns: {result.model_turns_used}/{result.model_turn_limit}",
+        f"Tool calls: {result.tool_calls_used}/{result.tool_call_limit}",
+    ]
+    if result.error_message is not None:
+        lines.append(f"Error: {result.error_message}")
+    print_block(
+        (
+            f"AGENT RUN RESULT | WORKER {result.worker_number} | "
+            f"{result.task.title}"
+        ),
+        "\n".join(lines),
+    )
+
+
 def build_supervisor_input(research_state):
     worker_results = research_state["worker_results"]
     sections = [
@@ -490,13 +718,13 @@ def build_supervisor_input(research_state):
         sections.extend(
             [
                 "",
-                f"### Worker {result['worker_number']}: {result['task'].title}",
+                f"### Worker {result.worker_number}: {result.task.title}",
                 "",
-                format_research_task(result["task"]),
+                format_research_task(result.task),
                 "",
                 "Notes:",
                 "",
-                result["notes"],
+                result.notes,
             ]
         )
     return "\n".join(sections)
@@ -530,18 +758,6 @@ def print_supervisor_decision(decision_number, decision):
         f"SUPERVISOR DECISION {decision_number}/{MAX_RESEARCH_WORKERS}",
         content,
     )
-
-
-def build_worker_input(research_brief, worker_number, task):
-    return f"""
-## Approved research brief
-
-{research_brief}
-
-## Worker {worker_number} task
-
-{format_research_task(task)}
-""".strip()
 
 
 def execute_worker_tool_call(tool_request, tool_call_number, tavily_api_key):
@@ -582,69 +798,171 @@ def execute_worker_tool_call(tool_request, tool_call_number, tavily_api_key):
 def run_research_worker_loop(
     client,
     model_name,
-    initial_input,
+    request,
     tavily_api_key,
 ):
-    worker_history = [{"role": "user", "content": initial_input}]
-    tool_call_count = 0
+    state = initialize_agent_run_state(request)
 
-    for iteration in range(1, MAX_WORKER_TURNS + 1):
-        tool_budget_exhausted = tool_call_count == MAX_WORKER_TOOL_CALLS
-        model_input = worker_history
+    while state.model_turns_used < MAX_WORKER_TURNS:
+        tool_budget_exhausted = (
+            state.tool_calls_used == MAX_WORKER_TOOL_CALLS
+        )
+        model_input = state.input_items
         if tool_budget_exhausted:
             model_input = [
-                *worker_history,
+                *state.input_items,
                 {
                     "role": "user",
                     "content": RESEARCH_BUDGET_EXHAUSTED_INPUT,
                 },
             ]
 
+        state.model_turns_used += 1
+        turn_number = state.model_turns_used
         print_progress(
-            f"Turn {iteration}/{MAX_WORKER_TURNS}",
+            f"Turn {turn_number}/{MAX_WORKER_TURNS}",
             "Model",
             "started",
-            f"{MAX_WORKER_TOOL_CALLS - tool_call_count} tools remaining",
+            (
+                f"{MAX_WORKER_TOOL_CALLS - state.tool_calls_used} "
+                "tools remaining"
+            ),
             indent=2,
         )
 
-        model_response = llm_call(
-            client,
-            model_name,
-            RESEARCH_INSTRUCTIONS,
-            model_input,
-            RESEARCH_TOOLS,
-            tool_choice="none" if tool_budget_exhausted else "auto",
-        )
-        worker_history.extend(model_response.output)
+        try:
+            model_response = llm_call(
+                client,
+                model_name,
+                RESEARCH_INSTRUCTIONS,
+                model_input,
+                RESEARCH_TOOLS,
+                tool_choice="none" if tool_budget_exhausted else "auto",
+            )
+        except RunCancelled as error:
+            return finalize_agent_run(
+                state,
+                AgentRunStatus.CANCELLED,
+                AgentTerminationReason.CANCELLED,
+                error_message=compact_agent_error(error),
+            )
+        except Exception as error:
+            return finalize_agent_run(
+                state,
+                AgentRunStatus.FAILED,
+                AgentTerminationReason.MODEL_ERROR,
+                error_message=format_model_exception(error),
+            )
+
+        if getattr(model_response, "status", None) == "cancelled":
+            return finalize_agent_run(
+                state,
+                AgentRunStatus.CANCELLED,
+                AgentTerminationReason.CANCELLED,
+                error_message="Research model response was cancelled.",
+            )
+
+        refusal = get_refusal_text(model_response)
+        if refusal is not None:
+            return finalize_agent_run(
+                state,
+                AgentRunStatus.FAILED,
+                AgentTerminationReason.REFUSAL,
+                error_message=compact_agent_error(
+                    f"Research Worker was refused: {refusal}"
+                ),
+            )
+
+        if getattr(model_response, "status", None) != "completed":
+            return finalize_agent_run(
+                state,
+                AgentRunStatus.FAILED,
+                AgentTerminationReason.MODEL_ERROR,
+                error_message=format_response_failure(model_response),
+            )
+
+        output_items = getattr(model_response, "output", None)
+        if not isinstance(output_items, list):
+            return finalize_agent_run(
+                state,
+                AgentRunStatus.FAILED,
+                AgentTerminationReason.MODEL_ERROR,
+                error_message="Research model response returned invalid output items.",
+            )
+        state.input_items.extend(output_items)
 
         tool_requests = [
-            item for item in model_response.output if item.type == "function_call"
+            item
+            for item in output_items
+            if getattr(item, "type", None) == "function_call"
         ]
 
         if tool_budget_exhausted and tool_requests:
-            raise RuntimeError(
-                "Research Worker requested tools after its tool budget expired."
+            if state.model_turns_used == MAX_WORKER_TURNS:
+                return finalize_agent_run(
+                    state,
+                    AgentRunStatus.FAILED,
+                    AgentTerminationReason.TURN_LIMIT,
+                    error_message=(
+                        "Research Worker reached its model-turn limit without "
+                        "final notes."
+                    ),
+                )
+            return finalize_agent_run(
+                state,
+                AgentRunStatus.FAILED,
+                AgentTerminationReason.MODEL_ERROR,
+                error_message=(
+                    "Research Worker requested tools after its tool budget "
+                    "expired."
+                ),
             )
 
         if not tool_requests:
+            notes = getattr(model_response, "output_text", None)
+            if not isinstance(notes, str) or not notes.strip():
+                if state.model_turns_used == MAX_WORKER_TURNS:
+                    return finalize_agent_run(
+                        state,
+                        AgentRunStatus.FAILED,
+                        AgentTerminationReason.TURN_LIMIT,
+                        error_message=(
+                            "Research Worker reached its model-turn limit "
+                            "without final notes."
+                        ),
+                    )
+                return finalize_agent_run(
+                    state,
+                    AgentRunStatus.FAILED,
+                    AgentTerminationReason.MODEL_ERROR,
+                    error_message="Research model response returned no notes.",
+                )
             print_progress(
-                f"Turn {iteration}/{MAX_WORKER_TURNS}",
+                f"Turn {turn_number}/{MAX_WORKER_TURNS}",
                 "Model",
                 "completed",
                 indent=2,
             )
-            return require_output_text(model_response, "Research")
+            return finalize_agent_run(
+                state,
+                AgentRunStatus.COMPLETED,
+                (
+                    AgentTerminationReason.TOOL_LIMIT
+                    if tool_budget_exhausted
+                    else AgentTerminationReason.COMPLETED
+                ),
+                notes=notes,
+            )
 
         for tool_request in tool_requests:
-            if tool_call_count == MAX_WORKER_TOOL_CALLS:
+            if state.tool_calls_used == MAX_WORKER_TOOL_CALLS:
                 print_progress(
                     "Tool limit",
                     tool_request.name,
                     "skipped",
                     indent=2,
                 )
-                worker_history.append(
+                state.input_items.append(
                     {
                         "type": "function_call_output",
                         "call_id": tool_request.call_id,
@@ -656,16 +974,33 @@ def run_research_worker_loop(
                 )
                 continue
 
-            tool_call_count += 1
-            worker_history.append(
-                execute_worker_tool_call(
+            state.tool_calls_used += 1
+            try:
+                tool_output = execute_worker_tool_call(
                     tool_request,
-                    tool_call_count,
+                    state.tool_calls_used,
                     tavily_api_key,
                 )
-            )
+            except RunCancelled as error:
+                return finalize_agent_run(
+                    state,
+                    AgentRunStatus.CANCELLED,
+                    AgentTerminationReason.CANCELLED,
+                    error_message=compact_agent_error(error),
+                )
+            except Exception as error:
+                return finalize_agent_run(
+                    state,
+                    AgentRunStatus.FAILED,
+                    AgentTerminationReason.TOOL_ERROR,
+                    error_message=compact_agent_error(
+                        "Research tool boundary failed "
+                        f"({type(error).__name__})."
+                    ),
+                )
+            state.input_items.append(tool_output)
 
-        if tool_call_count == MAX_WORKER_TOOL_CALLS:
+        if state.tool_calls_used == MAX_WORKER_TOOL_CALLS:
             print_progress(
                 "Research",
                 "Tool budget",
@@ -674,8 +1009,14 @@ def run_research_worker_loop(
                 indent=2,
             )
 
-    raise RuntimeError(
-        f"Research Worker did not finish within {MAX_WORKER_TURNS} model turns."
+    return finalize_agent_run(
+        state,
+        AgentRunStatus.FAILED,
+        AgentTerminationReason.TURN_LIMIT,
+        error_message=(
+            f"Research Worker did not finish within {MAX_WORKER_TURNS} "
+            "model turns."
+        ),
     )
 
 
@@ -687,39 +1028,40 @@ def run_research_worker(
     task,
     tavily_api_key,
 ):
+    request = AgentRunRequest(
+        worker_number=worker_number,
+        approved_brief=research_brief,
+        task=task,
+    )
     print_progress(
         f"Worker {worker_number}/{MAX_RESEARCH_WORKERS}",
         task.title,
         "started",
         indent=1,
     )
-    try:
-        notes = run_research_worker_loop(
-            client,
-            model_name,
-            build_worker_input(research_brief, worker_number, task),
-            tavily_api_key,
-        )
-    except Exception as error:
-        raise RuntimeError(
-            f"Research Worker {worker_number} ({task.title}) failed: {error}"
-        ) from error
+    result = run_research_worker_loop(
+        client,
+        model_name,
+        request,
+        tavily_api_key,
+    )
 
     print_progress(
         f"Worker {worker_number}/{MAX_RESEARCH_WORKERS}",
         task.title,
-        "completed",
+        result.status.value,
+        result.termination_reason.value,
         indent=1,
     )
-    print_block(
-        f"RESEARCH NOTES | WORKER {worker_number} | {task.title}",
-        notes,
-    )
-    return {
-        "worker_number": worker_number,
-        "task": task,
-        "notes": notes,
-    }
+    print_agent_run_result(result)
+    if result.status == AgentRunStatus.COMPLETED:
+        if result.notes is None:
+            raise ValueError("Completed Agent run result contains no notes.")
+        print_block(
+            f"RESEARCH NOTES | WORKER {worker_number} | {task.title}",
+            result.notes,
+        )
+    return result
 
 
 def run_research_supervisor_loop(client, model_name, research_brief, tavily_api_key):
@@ -764,6 +1106,11 @@ def run_research_supervisor_loop(client, model_name, research_brief, tavily_api_
             task,
             tavily_api_key,
         )
+        if worker_result.status != AgentRunStatus.COMPLETED:
+            raise RuntimeError(
+                f"Research Worker {worker_number} ({task.title}) "
+                f"{worker_result.status.value}: {worker_result.error_message}"
+            )
         research_state["worker_results"].append(worker_result)
 
     if research_state["stop_reason"] is None:
@@ -783,13 +1130,13 @@ def format_combined_research_notes(research_state):
     sections = []
     for result in research_state["worker_results"]:
         sections.append(
-            f"""## Worker {result['worker_number']}: {result['task'].title}
+            f"""## Worker {result.worker_number}: {result.task.title}
 
-{format_research_task(result['task'])}
+{format_research_task(result.task)}
 
 ### Notes
 
-{result['notes']}"""
+{result.notes}"""
         )
     return "\n\n".join(sections)
 

@@ -7,12 +7,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A learning-oriented deep-research CLI that adds model and Agent mechanisms one observable
-release at a time. Release 0.6.0 turns an initial question into an explicitly approved
-ResearchBrief, lets a Research Supervisor adaptively delegate bounded work to isolated
-Research Workers, and then runs an explicit write-critic-revise workflow. The current runtime
-uses OpenAI-hosted models; the planned harness sequence adds a stable Worker run contract, deep
-source reading, an optional local open-weight Worker, long-horizon context management,
-dependency-aware multi-agent scheduling, and batch rollouts before training work begins.
+release at a time. Release 0.7.0 turns an initial question into an explicitly approved
+ResearchBrief, lets a Research Supervisor adaptively delegate bounded work to isolated Research
+Workers, and returns every Worker through an explicit application-owned run contract before the
+write-critic-revise workflow. The current runtime uses OpenAI-hosted models; the planned harness
+sequence next adds deep source reading, an optional local open-weight Worker, long-horizon context
+management, dependency-aware multi-agent scheduling, and batch rollouts before training work
+begins.
 
 ## Core Features
 
@@ -29,6 +30,8 @@ dependency-aware multi-agent scheduling, and batch rollouts before training work
   function tools.
 - Runs at most four Workers sequentially with fresh application-owned Responses API history
   and independent hard model-turn and tool-call limits.
+- Represents every Worker as an immutable `AgentRunRequest`, private mutable `AgentRunState`, and
+  immutable `AgentRunResult` with visible status, termination reason, and budget usage.
 - Shows Scope decisions, pending briefs, approval, Supervisor decisions, Worker boundaries,
   Agent turns, tool selections, every intermediate result, report stages, and final report
   in consistently formatted terminal sections.
@@ -141,7 +144,16 @@ Evidence targets:
     [Tool 1/5] tavily_search_tool | STARTED
     [Tool 1/5] tavily_search_tool | COMPLETED
 ...
-  [Worker 1/4] <task title> | COMPLETED
+  [Worker 1/4] <task title> | COMPLETED | completed
+
+================================================================================
+AGENT RUN RESULT | WORKER 1 | <task title>
+================================================================================
+Status: completed
+Termination reason: completed
+Model turns: <used>/6
+Tool calls: <used>/5
+================================================================================
 
 ================================================================================
 RESEARCH NOTES | WORKER 1 | <task title>
@@ -162,7 +174,7 @@ FINAL REPORT
 [Run] Deep research | COMPLETED
 ```
 
-Release 0.6.0 does not create a run directory or write application output files.
+Release 0.7.0 does not create a run directory or write application output files.
 Structured tracing is also not part of this release.
 
 ## Configuration
@@ -186,10 +198,12 @@ Research question
     → explicit approval or one revision and final approval
     → Research Supervisor observes ResearchState
         → selects one next task or finishes
-        → isolated Research Worker with fresh history
+        → AgentRunRequest for one isolated Research Worker
+        → private AgentRunState with fresh history
             → tavily_search_tool
             → arxiv_search_tool
-        → application merges Worker notes into ResearchState
+        → immutable AgentRunResult
+        → application merges only completed results into ResearchState
         → Supervisor observes the updated state
     → Write
     → Critic
@@ -208,8 +222,10 @@ The application keeps a small `ResearchState` containing `approved_brief`, order
 rendering of that state and returns a list containing zero or one next task. An empty list
 finishes Research; one task starts one isolated Research Worker with fresh ordered
 Responses API history. The Worker executes requested functions and links every result with
-its matching `call_id`; only its final notes return to ResearchState. Only the approved
-brief and combined Worker notes reach Write. Research uses automatic tool selection while
+its matching `call_id`; every expected outcome becomes an `AgentRunResult` with terminal status,
+bounded termination reason, notes or error, and used-versus-limit turn and tool accounting. Only
+completed results enter ResearchState, and only the approved brief and combined Worker notes
+reach Write. Research uses automatic tool selection while
 budget remains and `tool_choice="none"` after the fifth tool attempt. Each search returns at
 most three entries, long result text is bounded before entering history, and Supervisor requests
 use a fixed 4,000-token output limit. Worker requests use the configured model's default output
@@ -220,12 +236,11 @@ request reaches the visible application failure boundary without a hidden repeat
 
 ## Planned Release Direction
 
-The released 0.6.0 implementation remains the current runnable baseline. Planned releases evolve
+The verified 0.7.0 implementation is the current runnable baseline. Planned releases evolve
 the same explicit runtime in this order:
 
 | Version | Primary mechanism | Intended outcome |
 | --- | --- | --- |
-| 0.7.0 | Explicit Agent run contract | A Worker returns visible status, termination, output, and budget usage through one stable application boundary. |
 | 0.8.0 | Deep retrieval Worker | A Worker can select and read bounded content from sources returned by search. |
 | 0.9.0 | Local open-weight Worker | The Worker can optionally use a local vLLM Responses-compatible model while hosted OpenAI stages remain available. |
 | 0.10.0 | Long-horizon context sessions | A long Worker run crosses explicit in-memory summary boundaries instead of replaying unbounded history. |

@@ -75,7 +75,7 @@ def arxiv_search_tool(query, max_results):
         },
         headers={
             "User-Agent": (
-                "agentic-deep-research/0.6.0 "
+                "agentic-deep-research/0.7.0 "
                 "(+https://github.com/daniellaah/agentic-deep-research)"
             )
         },

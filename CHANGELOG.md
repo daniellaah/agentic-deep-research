@@ -6,6 +6,25 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-23
+
+### Added
+
+- Added frozen `AgentRunRequest` and `AgentRunResult` dataclasses plus one private mutable
+  `AgentRunState` for every Research Worker invocation.
+- Added bounded Agent run statuses and termination reasons covering completion, tool and turn
+  limits, refusal, model and tool errors, reserved context limits, and cancellation.
+- Added one terminal Worker summary showing status, termination reason, model-turn usage, and
+  tool-call usage for successful and unsuccessful results.
+
+### Changed
+
+- Replaced the Worker's string-or-exception boundary with one immutable result for expected
+  operational outcomes while preserving the explicit synchronous Responses function-tool loop.
+- Changed `ResearchState` to retain only completed `AgentRunResult` values; failed and cancelled
+  results remain visible and stop the run before another Supervisor or report request.
+- Updated the project version and arXiv `User-Agent` to 0.7.0 without adding a dependency.
+
 ## [0.6.0] - 2026-08-22
 
 ### Added
