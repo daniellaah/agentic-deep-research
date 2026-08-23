@@ -82,6 +82,11 @@ class AgentTerminationReason(StrEnum):
     CANCELLED = "cancelled"
 
 
+class AgentModelSource(StrEnum):
+    OPENAI = "openai"
+    LOCAL = "local"
+
+
 class RunCancelled(Exception):
     """Stop a run after application cancellation or local input ends."""
 
@@ -148,6 +153,8 @@ class AgentRunRequest:
     worker_number: int
     approved_brief: str
     task: ResearchTask
+    model_source: AgentModelSource
+    model_name: str
 
 
 @dataclass
@@ -168,6 +175,8 @@ class AgentRunState:
 class AgentRunResult:
     worker_number: int
     task: ResearchTask
+    model_source: AgentModelSource
+    model_name: str
     status: AgentRunStatus
     termination_reason: AgentTerminationReason
     notes: str | None
@@ -765,6 +774,12 @@ def initialize_agent_run_state(request):
         raise ValueError("Agent run approved_brief must be a non-empty string.")
     if not isinstance(request.task, ResearchTask):
         raise TypeError("Agent run task must be a validated ResearchTask.")
+    if not isinstance(request.model_source, AgentModelSource):
+        raise TypeError("Agent run model_source must be a valid AgentModelSource.")
+    if not isinstance(request.model_name, str) or not request.model_name.strip():
+        raise ValueError("Agent run model_name must be a non-empty string.")
+    if request.model_name != request.model_name.strip():
+        raise ValueError("Agent run model_name must not contain surrounding whitespace.")
 
     return AgentRunState(
         request=request,
@@ -850,6 +865,8 @@ def finalize_agent_run(
     return AgentRunResult(
         worker_number=state.request.worker_number,
         task=state.request.task,
+        model_source=state.request.model_source,
+        model_name=state.request.model_name,
         status=state.status,
         termination_reason=state.termination_reason,
         notes=state.notes,
@@ -865,6 +882,8 @@ def finalize_agent_run(
 
 def print_agent_run_result(result):
     lines = [
+        f"Model source: {result.model_source.value}",
+        f"Model: {result.model_name}",
         f"Status: {result.status.value}",
         f"Termination reason: {result.termination_reason.value}",
         f"Model turns: {result.model_turns_used}/{result.model_turn_limit}",
@@ -1047,7 +1066,6 @@ def execute_worker_tool_call(tool_request, state, tavily_api_key):
 
 def run_research_worker_loop(
     client,
-    model_name,
     request,
     tavily_api_key,
 ):
@@ -1091,7 +1109,7 @@ def run_research_worker_loop(
         try:
             model_response = llm_call(
                 client,
-                model_name,
+                request.model_name,
                 RESEARCH_INSTRUCTIONS,
                 model_input,
                 RESEARCH_TOOLS,
@@ -1280,6 +1298,7 @@ def run_research_worker_loop(
 
 def run_research_worker(
     client,
+    model_source,
     model_name,
     research_brief,
     worker_number,
@@ -1290,6 +1309,8 @@ def run_research_worker(
         worker_number=worker_number,
         approved_brief=research_brief,
         task=task,
+        model_source=model_source,
+        model_name=model_name,
     )
     print_progress(
         f"Worker {worker_number}/{MAX_RESEARCH_WORKERS}",
@@ -1299,7 +1320,6 @@ def run_research_worker(
     )
     result = run_research_worker_loop(
         client,
-        model_name,
         request,
         tavily_api_key,
     )
@@ -1322,7 +1342,15 @@ def run_research_worker(
     return result
 
 
-def run_research_supervisor_loop(client, model_name, research_brief, tavily_api_key):
+def run_research_supervisor_loop(
+    client,
+    model_name,
+    worker_client,
+    worker_model_source,
+    worker_model_name,
+    research_brief,
+    tavily_api_key,
+):
     research_state = {
         "approved_brief": research_brief,
         "worker_results": [],
@@ -1357,8 +1385,9 @@ def run_research_supervisor_loop(client, model_name, research_brief, tavily_api_
 
         task = decision.next_tasks[0]
         worker_result = run_research_worker(
-            client,
-            model_name,
+            worker_client,
+            worker_model_source,
+            worker_model_name,
             research_brief,
             worker_number,
             task,
@@ -1445,7 +1474,21 @@ def run_report_workflow(client, model_name, brief_text, combined_notes):
     return final_report
 
 
-def run_deep_research(client, model_name, question, tavily_api_key):
+def run_deep_research(
+    client,
+    model_name,
+    worker_client,
+    worker_model_source,
+    worker_model_name,
+    question,
+    tavily_api_key,
+):
+    print_progress(
+        "Worker model",
+        "Research policy",
+        "configured",
+        f"{worker_model_source.value}, {worker_model_name}",
+    )
     print_progress("1/5", "Scope", "started")
     approved_brief = run_scope_workflow(client, model_name, question)
     brief_text = format_research_brief(approved_brief)
@@ -1455,6 +1498,9 @@ def run_deep_research(client, model_name, question, tavily_api_key):
     research_state = run_research_supervisor_loop(
         client,
         model_name,
+        worker_client,
+        worker_model_source,
+        worker_model_name,
         brief_text,
         tavily_api_key,
     )
@@ -1494,6 +1540,7 @@ def main():
     api_key = os.getenv("OPENAI_API_KEY", "").strip()
     model_name = os.getenv("MODEL_NAME", "").strip()
     tavily_api_key = os.getenv("TAVILY_API_KEY", "").strip()
+    worker_backend = os.getenv("WORKER_BACKEND", "").strip() or "openai"
 
     missing = [
         name
@@ -1511,10 +1558,60 @@ def main():
         return 2
 
     try:
+        worker_model_source = AgentModelSource(worker_backend)
+    except ValueError:
+        print_error("WORKER_BACKEND must be one of: openai, local.")
+        return 2
+
+    local_worker_base_url = ""
+    local_worker_api_key = ""
+    local_worker_model_name = ""
+    if worker_model_source == AgentModelSource.LOCAL:
+        local_worker_base_url = os.getenv("LOCAL_WORKER_BASE_URL", "").strip()
+        local_worker_api_key = os.getenv("LOCAL_WORKER_API_KEY", "").strip()
+        local_worker_model_name = os.getenv("LOCAL_WORKER_MODEL_NAME", "").strip()
+        missing_local = [
+            name
+            for name, value in {
+                "LOCAL_WORKER_BASE_URL": local_worker_base_url,
+                "LOCAL_WORKER_API_KEY": local_worker_api_key,
+                "LOCAL_WORKER_MODEL_NAME": local_worker_model_name,
+            }.items()
+            if not value
+        ]
+        if missing_local:
+            print_error(
+                "Missing environment variable(s): "
+                f"{', '.join(missing_local)}."
+            )
+            return 2
+
+    try:
         client = OpenAI(api_key=api_key, max_retries=0)
+        if worker_model_source == AgentModelSource.LOCAL:
+            worker_client = OpenAI(
+                api_key=local_worker_api_key,
+                base_url=local_worker_base_url,
+                max_retries=0,
+            )
+            worker_model_name = local_worker_model_name
+        else:
+            worker_client = client
+            worker_model_name = model_name
+    except Exception as error:
+        print_error(
+            "Run failed: model client construction failed "
+            f"({type(error).__name__})."
+        )
+        return 1
+
+    try:
         final_report = run_deep_research(
             client,
             model_name,
+            worker_client,
+            worker_model_source,
+            worker_model_name,
             question,
             tavily_api_key,
         )

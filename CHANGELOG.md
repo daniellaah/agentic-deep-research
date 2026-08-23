@@ -6,6 +6,25 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-08-23
+
+### Added
+
+- Added one run-level `openai` or `local` Worker backend selection while Scope, Supervisor,
+  Write, Critic, and Revise remain OpenAI-hosted.
+- Added conditional local vLLM endpoint, API-key, and model configuration through a separate
+  official OpenAI SDK client.
+- Added model source and model name to every `AgentRunRequest`, immutable `AgentRunResult`, and
+  terminal result summary.
+
+### Changed
+
+- Reused the existing Responses item loop, tools, retrieval state, limits, and stopping behavior
+  for both hosted and local Worker policies without adding a provider adapter or vLLM dependency.
+- Made the selected Worker model visible before Scope and kept endpoint values and credentials
+  out of terminal output.
+- Updated the project version and arXiv `User-Agent` to 0.9.0 without adding a dependency.
+
 ## [0.8.0] - 2026-08-23
 
 ### Added

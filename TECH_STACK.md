@@ -24,38 +24,50 @@ only when a concrete release becomes easier to understand with them.
 
 ### Current release boundary
 
-- **Provider:** OpenAI-hosted models only in release 0.8.0
-- **API:** Responses API
+- **Hosted workflow:** OpenAI-hosted Scope, Supervisor, Write, Critic, and Revise
+- **Research Worker:** selected once per run as OpenAI-hosted or local open-weight through vLLM
+- **API:** Responses API on both Worker paths
 - **SDK:** official OpenAI Python SDK
-- **Client:** `OpenAI` with SDK retries disabled through `max_retries=0`
-- **Model configuration:** required through `MODEL_NAME`
-- **Credentials:** required through `OPENAI_API_KEY`
+- **Clients:** one hosted `OpenAI` client and, only for a local Worker, one separate `OpenAI`
+  client; both disable SDK retries through `max_retries=0`
+- **Hosted configuration:** `OPENAI_API_KEY` and `MODEL_NAME`
+- **Worker selection:** optional `WORKER_BACKEND`, defaulting to `openai`
+- **Local Worker configuration:** `LOCAL_WORKER_BASE_URL`, `LOCAL_WORKER_API_KEY`, and
+  `LOCAL_WORKER_MODEL_NAME`
 
-The model name is configuration rather than a hard-coded project decision. This keeps the
-learning code stable while model availability changes.
+Model names remain configuration rather than hard-coded project decisions. The local reference
+model in the release specification is an acceptance baseline, not an application default.
 
-### Accepted harness direction
+### Local Worker compatibility decision
 
-The roadmap adopts a local-open-weight path without turning the project into a
-provider-neutral gateway. Release 0.9.0 is planned to let the Research Worker use either the
-current OpenAI-hosted endpoint or a local model served through a vLLM
-Responses-compatible endpoint. Scope, Supervisor, and report stages remain OpenAI-hosted in
-that first local-model release. OpenAI-hosted models remain useful as optional teachers,
-baselines, and acceptance references rather than the only research policy.
+Release 0.9.0 lets only the Research Worker use either the current OpenAI endpoint or a local
+model served through a vLLM Responses-compatible endpoint. Scope, Supervisor, and report stages
+remain OpenAI-hosted. OpenAI-hosted Workers remain useful as baselines and acceptance references.
 
-The local path should continue to use the official OpenAI Python client and the explicit
-Responses item loop when the selected vLLM version and model support the required semantics.
-The 0.9.0 specification must verify function tools, response-item replay, refusal and incomplete
-responses, and any selected-model parser requirements against current
-[vLLM OpenAI-compatible server documentation](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/).
-It must record unsupported behavior explicitly instead of hiding incompatibilities behind a
-general model-provider abstraction.
+The local compatibility baseline is vLLM 0.20.2 with `Qwen/Qwen3-1.7B` and the reasoning,
+structured-output, automatic-tool-choice, and Hermes parser flags documented by the official
+[vLLM Responses tool example](https://docs.vllm.ai/en/v0.20.2/examples/online_serving/openai_responses_client_with_tools/).
+The application neither depends on vLLM nor manages its server. It changes only the official
+SDK client's base URL, API key, and request model for Worker calls.
 
-The accepted sequence is to establish an explicit Worker run contract in 0.7.0, add bounded
-selected-source reading in 0.8.0, and only then add the optional local Worker in 0.9.0. No local
-runtime configuration or dependency belongs to the current 0.8.0 CLI.
+The release specification also records one manually verified Apple Silicon operator profile:
+vLLM-Metal with `mlx-community/Qwen3.5-9B-4bit`, the `qwen3` reasoning parser, and the
+`qwen3_coder` tool parser. The official
+[vLLM-Metal supported-model table](https://github.com/vllm-project/vllm-metal/blob/main/docs/supported_models.md)
+lists the Qwen3.5 family as supported. This platform profile satisfies the same application
+contract and does not replace the portable vLLM 0.20.2 reference or add a project dependency.
 
-### Release 0.8.0 state
+Both paths use the same strict tool definitions, `store=False`, complete ordered output-item
+replay, linked function outputs, budgets, and result classification. vLLM 0.20.2 accepts local
+reasoning-text items but rejects encrypted reasoning input; the selected local model does not
+produce OpenAI-encrypted reasoning. Its Responses protocol represents output-token exhaustion as
+`incomplete` but does not guarantee OpenAI refusal content items for the selected model. These
+differences remain documented and visible as existing Worker outcomes instead of being hidden by
+a provider gateway or fallback request. See the
+[release specification](specs/v0.9.0-local-open-weight-worker.md) for the exact compatibility
+contract and primary sources.
+
+### Release 0.9.0 state
 
 The runtime begins with a bounded Scope stage. Pydantic 2 defines
 `ClarificationAssessment` and `ResearchBrief`, and the official SDK's
@@ -77,13 +89,14 @@ Workers. The Supervisor instructions prohibit report-sized tasks and requirement
 three sources. The application merges only completed Worker results into state. The static
 `ResearchPlan` and Plan stage are removed.
 
-Each delegated Worker now crosses one explicit application-owned run boundary. A frozen
-`AgentRunRequest` contains its Worker number, rendered approved brief, and validated task. A
+Each delegated Worker crosses one explicit application-owned run boundary. A frozen
+`AgentRunRequest` contains its Worker number, rendered approved brief, validated task, bounded
+model source, and model name. A
 mutable `AgentRunState` privately retains the ordered Responses items, model-turn and custom-tool
 usage, an active source registry, source-read usage, current status, termination reason, final
 notes, and concise error while the Worker runs.
-A frozen `AgentRunResult` copies task identity, terminal status, bounded termination reason,
-notes or error, and used-versus-limit turn, tool, and read accounting. Standard-library
+A frozen `AgentRunResult` copies task and model identity, terminal status, bounded termination
+reason, notes or error, and used-versus-limit turn, tool, and read accounting. Standard-library
 dataclasses and `StrEnum` represent this boundary because it is application state rather than
 model-generated Structured Output.
 
@@ -115,9 +128,11 @@ workflow visible. `run_scope_workflow` owns bounded intake and approval;
 merging; `run_research_worker` owns one visible Worker lifecycle;
 `run_research_worker_loop` owns one mutable run state, its custom tool loop, and result
 finalization; and `run_report_workflow` owns the explicit Write-Critic-Revise sequence. `main`
-owns the CLI harness, client construction, top-level error handling, and final report output. The
-one SDK client uses `max_retries=0` so transient API failures remain visible at the first
-application-owned failure boundary instead of creating hidden provider retries.
+owns the CLI harness, backend selection, client construction, top-level error handling, and final
+report output. The hosted client and optional local client use `max_retries=0` so transient API
+failures remain visible at the first application-owned failure boundary instead of creating
+hidden provider retries. The OpenAI Worker path reuses the hosted client; the local path constructs
+one isolated client and never substitutes either path's API key.
 `agent_instructions.py` owns the plain instruction and model-input constants for every
 model-facing stage. `agent_tools.py` owns the tool schemas, functions, and dispatch.
 
@@ -146,6 +161,11 @@ Reasoning and assistant items needed for stateless continuation remain in the or
 history. The application preserves provider-owned fields such as opaque encrypted content
 or phase metadata when returned, replays those items without interpreting them, and does
 not present them as private chain-of-thought.
+
+The hosted and local Workers never share a history. The selected local Qwen profiles return
+parser-produced reasoning text rather than encrypted reasoning. Any incompatible local
+output or replay request fails at the existing `model_error` boundary without translation or
+fallback.
 
 The official OpenAI documentation states that manually managed history should preserve
 prior user inputs and every response output item. Recheck the
@@ -184,7 +204,8 @@ adding a compression stage.
 All three JSON tool definitions and implementations live in `agent_tools.py` so
 `deep_research.py` shows the Agent loop without network-client details.
 
-Release 0.8.0 keeps discovery separate from reading and does not expose arbitrary URL fetching.
+Release 0.9.0 preserves discovery as separate from reading and does not expose arbitrary URL
+fetching.
 The model can read only application-issued IDs from its own searches; full papers, PDFs, direct
 destination requests, browser behavior, citation allowlists, and output correction remain out of
 scope. `tavily-python` and `requests` keep the three tool implementations short while the
@@ -203,9 +224,10 @@ retains optional clarification answers, explicit ResearchBrief approval or cance
 and at most one revision request followed by final approval. Release 0.6.0 adds visible
 Supervisor decisions, isolated Worker boundaries, central result merging, and the final
 Research stop reason. Release 0.7.0 adds one result summary for every started Worker; release
-0.8.0 adds selected-source registration and read progress plus read usage to that summary. Local
-input validation may repeat the current prompt, but it cannot create another model clarification
-round or brief revision.
+0.8.0 adds selected-source registration and read progress plus read usage to that summary.
+Release 0.9.0 prints the selected Worker model source and name once before Scope and in every
+Worker result. Local input validation may repeat the current prompt, but it cannot create another
+model clarification round or brief revision.
 
 The first release uses plain terminal text and the standard library. `python-dotenv` is
 limited to loading local `.env` configuration. A terminal rendering dependency may be
@@ -230,7 +252,9 @@ decisions, and ordered Worker results. The CLI prints those boundaries, combined
 notes, draft, critique, and final Markdown report. Release 0.7.0 replaces each plain successful
 Worker-result dictionary with an immutable `AgentRunResult` and also prints failed or cancelled
 results before the existing fatal boundary. Release 0.8.0 keeps the source registry and selected
-content only in the active Worker's memory and adds no output file or run directory.
+content only in the active Worker's memory. Release 0.9.0 adds model source and model name to the
+request and result while keeping clients, endpoints, credentials, and output histories in memory.
+It adds no output file or run directory.
 
 Later releases may add artifacts only when their specifications require them. Historical
 generated artifacts remain local and ignored by Git.
@@ -247,6 +271,10 @@ Current variables:
 - `OPENAI_API_KEY`
 - `MODEL_NAME`
 - `TAVILY_API_KEY`
+- `WORKER_BACKEND` (optional, `openai` by default)
+- `LOCAL_WORKER_BASE_URL` (required only for `local`)
+- `LOCAL_WORKER_API_KEY` (required only for `local`)
+- `LOCAL_WORKER_MODEL_NAME` (required only for `local`)
 
 ## Data Representation
 
@@ -255,7 +283,9 @@ easy to understand. Release 0.7.0 introduces named standard-library dataclasses 
 explicit Worker request, mutable run state, and terminal result that later local inference,
 context sessions, and rollout consumers must share. Release 0.8.0 extends the mutable state with
 one plain source dictionary and read counter and extends the result only with read usage and its
-limit; it adds no source class or retrieval abstraction.
+limit; it adds no source class or retrieval abstraction. Release 0.9.0 adds one bounded model
+source enum and adds the selected source and model name to the existing request and result. It
+does not store a client or endpoint in Agent state or introduce a model configuration class.
 
 Pydantic 2 validates only model-generated application boundaries:
 `ClarificationAssessment`, `ResearchBrief`, `SupervisorDecision`, and nested
@@ -267,7 +297,7 @@ completed `AgentRunResult` values.
 
 ## Quality Checks
 
-Release 0.8.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
+Release 0.9.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
 its specification. Ruff, mypy, and an automated test suite remain intentionally omitted
 while the learning runtime is kept minimal.
 
@@ -282,3 +312,6 @@ A dependency is acceptable only when:
 
 The project currently depends on the OpenAI SDK, Pydantic 2, `python-dotenv`,
 `tavily-python`, and `requests` at runtime.
+
+vLLM, model weights, parsers, accelerator runtimes, and their dependencies belong to the
+operator-managed local server and are not project dependencies.
