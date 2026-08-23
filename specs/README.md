@@ -12,7 +12,7 @@ written before implementation and remains the acceptance reference for its relea
 - [v0.5.0 — Scoping and ResearchBrief](v0.5.0-scoping-research-brief.md) — Released
 - [v0.6.0 — Sequential Research Supervisor and Workers](v0.6.0-sequential-research-supervisor-workers.md) — Released
 - [v0.7.0 — Explicit Agent Run Contract](v0.7.0-explicit-agent-run-contract.md) — Released
-- [v0.8.0 — Deep Retrieval Worker](v0.8.0-deep-retrieval-worker.md) — Verified
+- [v0.8.0 — Deep Retrieval Worker](v0.8.0-deep-retrieval-worker.md) — Released
 
 ## Required Sections
 
