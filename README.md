@@ -236,7 +236,7 @@ request reaches the visible application failure boundary without a hidden repeat
 
 ## Planned Release Direction
 
-The verified 0.7.0 implementation is the current runnable baseline. Planned releases evolve
+The released 0.7.0 implementation is the current runnable baseline. Planned releases evolve
 the same explicit runtime in this order:
 
 | Version | Primary mechanism | Intended outcome |

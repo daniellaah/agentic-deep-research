@@ -11,7 +11,7 @@ written before implementation and remains the acceptance reference for its relea
 - [v0.4.0 — Static Structured Research Planning](v0.4.0-static-research-planning.md) — Released
 - [v0.5.0 — Scoping and ResearchBrief](v0.5.0-scoping-research-brief.md) — Released
 - [v0.6.0 — Sequential Research Supervisor and Workers](v0.6.0-sequential-research-supervisor-workers.md) — Released
-- [v0.7.0 — Explicit Agent Run Contract](v0.7.0-explicit-agent-run-contract.md) — Verified
+- [v0.7.0 — Explicit Agent Run Contract](v0.7.0-explicit-agent-run-contract.md) — Released
 
 ## Required Sections
 
