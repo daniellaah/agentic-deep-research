@@ -6,11 +6,11 @@ written before implementation and remains the acceptance reference for its relea
 ## Releases
 
 - [v0.1.0 — One Responses API Call](v0.1.0-single-response.md) — Released
-- [v0.2.0 — Fixed Write-Critic-Revise Workflow](v0.2.0-report-refinement.md) — Verified
-- [v0.3.0 — Tool-Using Research Agent](v0.3.0-tool-research-agent.md) — Verified
-- [v0.4.0 — Static Structured Research Planning](v0.4.0-static-research-planning.md) — Verified
-- [v0.5.0 — Scoping and ResearchBrief](v0.5.0-scoping-research-brief.md) — Verified
-- [v0.6.0 — Sequential Research Supervisor and Workers](v0.6.0-sequential-research-supervisor-workers.md) — Verified
+- [v0.2.0 — Fixed Write-Critic-Revise Workflow](v0.2.0-report-refinement.md) — Released
+- [v0.3.0 — Tool-Using Research Agent](v0.3.0-tool-research-agent.md) — Released
+- [v0.4.0 — Static Structured Research Planning](v0.4.0-static-research-planning.md) — Released
+- [v0.5.0 — Scoping and ResearchBrief](v0.5.0-scoping-research-brief.md) — Released
+- [v0.6.0 — Sequential Research Supervisor and Workers](v0.6.0-sequential-research-supervisor-workers.md) — Released
 
 ## Required Sections
 
