@@ -13,7 +13,7 @@ written before implementation and remains the acceptance reference for its relea
 - [v0.6.0 — Sequential Research Supervisor and Workers](v0.6.0-sequential-research-supervisor-workers.md) — Released
 - [v0.7.0 — Explicit Agent Run Contract](v0.7.0-explicit-agent-run-contract.md) — Released
 - [v0.8.0 — Deep Retrieval Worker](v0.8.0-deep-retrieval-worker.md) — Released
-- [v0.9.0 — Local Open-Weight Worker](v0.9.0-local-open-weight-worker.md) — Verified
+- [v0.9.0 — Local Open-Weight Worker](v0.9.0-local-open-weight-worker.md) — Released
 
 ## Required Sections
 

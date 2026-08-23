@@ -28,7 +28,7 @@ and kept as simple as its learning objective allows.
 | 0.6.0 | Sequential research supervisor and workers | A supervisor repeatedly observes application-owned research state and delegates one bounded task to an isolated worker until it decides to finish or reaches a hard limit | Released |
 | 0.7.0 | Explicit Agent run contract | Every Worker returns a structured application-owned result with visible status, termination reason, and budget usage | Released |
 | 0.8.0 | Deep retrieval Worker | A Worker searches, selects, and reads bounded source content before producing research notes | Released |
-| 0.9.0 | Local open-weight Worker | The same Worker harness can run against either OpenAI or a local vLLM Responses-compatible endpoint | Verified |
+| 0.9.0 | Local open-weight Worker | The same Worker harness can run against either OpenAI or a local vLLM Responses-compatible endpoint | Released |
 | 0.10.0 | Long-horizon context sessions | A Worker crosses visible in-memory session boundaries through bounded context summaries instead of replaying unbounded history | Planned |
 | 0.11.0 | Bounded task graph and parallel workers | The Supervisor may create a small dependency-aware task batch whose ready tasks run concurrently | Planned |
 | 0.12.0 | Failure-aware adaptive orchestration | Failed work becomes visible in shared state so the Supervisor can replace, narrow, or abandon it within hard limits | Planned |
