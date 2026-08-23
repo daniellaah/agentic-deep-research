@@ -1,7 +1,7 @@
 [project]
 name = "agentic-deep-research"
-version = "0.7.0"
-description = "A small deep-research CLI with explicit Worker run contracts"
+version = "0.8.0"
+description = "A small deep-research CLI with bounded selected-source reading"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "openai>=3.3.1,<4",

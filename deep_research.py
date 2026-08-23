@@ -1,12 +1,14 @@
 """Scope and run supervised research before refining a final report."""
 
 import argparse
+import ipaddress
 import json
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Annotated
+from urllib.parse import unquote, urlsplit
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -23,15 +25,25 @@ from agent_instructions import (
     SUPERVISOR_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
 )
-from agent_tools import RESEARCH_TOOLS, execute_research_tool
+from agent_tools import (
+    MAX_SOURCE_CONTENT_CHARACTERS,
+    MAX_SOURCE_READ_QUERY_CHARACTERS,
+    RESEARCH_TOOLS,
+    execute_research_tool,
+)
 
 MAX_WORKER_TURNS = 6
 MAX_WORKER_TOOL_CALLS = 5
+MAX_WORKER_SOURCE_READS = 2
 MAX_RESEARCH_WORKERS = 4
 MAX_SUPERVISOR_OUTPUT_TOKENS = 4000
 MAX_LOCAL_INPUT_CHARACTERS = 2000
 MAX_AGENT_ERROR_CHARACTERS = 300
 OUTPUT_WIDTH = 80
+SEARCH_TOOL_NAMES = {"tavily_search_tool", "arxiv_search_tool"}
+READ_SOURCE_TOOL_NAME = "read_source_tool"
+LOCAL_HOST_NAMES = {"localhost", "local", "internal"}
+LOCAL_HOST_SUFFIXES = (".localhost", ".local", ".internal")
 
 
 ClarificationQuestion = Annotated[
@@ -144,6 +156,8 @@ class AgentRunState:
     input_items: list
     model_turns_used: int = 0
     tool_calls_used: int = 0
+    source_urls: dict[str, str] = field(default_factory=dict)
+    source_reads_used: int = 0
     status: AgentRunStatus = AgentRunStatus.RUNNING
     termination_reason: AgentTerminationReason | None = None
     notes: str | None = None
@@ -162,6 +176,8 @@ class AgentRunResult:
     model_turn_limit: int
     tool_calls_used: int
     tool_call_limit: int
+    source_reads_used: int
+    source_read_limit: int
 
 
 def print_progress(label, subject, status, detail=None, indent=0):
@@ -243,6 +259,167 @@ def format_response_failure(response):
     return compact_agent_error(
         f"Research model response did not complete ({', '.join(details)})."
     )
+
+
+def canonical_source_destination(source_url):
+    if not isinstance(source_url, str) or not source_url.strip():
+        raise ValueError("Source URL must be a non-empty string.")
+    source_url = source_url.strip()
+    if any(character.isspace() for character in source_url):
+        raise ValueError("Source URL must not contain whitespace.")
+    if any(ord(character) < 32 or ord(character) == 127 for character in source_url):
+        raise ValueError("Source URL must not contain control characters.")
+
+    parsed = urlsplit(source_url)
+    scheme = parsed.scheme.casefold()
+    if scheme not in {"http", "https"}:
+        raise ValueError("Source URL must use HTTP or HTTPS.")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("Source URL must not contain credentials.")
+
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Source URL must contain a hostname.")
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("Source URL contains an invalid port.") from error
+
+    normalized_host = hostname.rstrip(".").casefold()
+    if not normalized_host:
+        raise ValueError("Source URL must contain a hostname.")
+    try:
+        address = ipaddress.ip_address(normalized_host)
+    except ValueError:
+        try:
+            normalized_host = normalized_host.encode("idna").decode("ascii")
+        except UnicodeError as error:
+            raise ValueError("Source URL contains an invalid hostname.") from error
+        if normalized_host in LOCAL_HOST_NAMES or normalized_host.endswith(
+            LOCAL_HOST_SUFFIXES
+        ):
+            raise ValueError("Source URL uses a local hostname.")
+    else:
+        if not address.is_global:
+            raise ValueError("Source URL uses a non-global IP address.")
+
+    if unquote(parsed.path).casefold().endswith(".pdf"):
+        raise ValueError("PDF source reading is not supported.")
+
+    if (scheme, port) in {("http", 80), ("https", 443)}:
+        port = None
+    return (
+        scheme,
+        normalized_host,
+        port,
+        parsed.path or "/",
+        parsed.query,
+    )
+
+
+def get_source_hostname(source_url):
+    return canonical_source_destination(source_url)[1]
+
+
+def register_search_sources(state, tool_result):
+    if not isinstance(tool_result, list):
+        raise TypeError("Search tool result must be a list.")
+
+    canonical_ids = {
+        canonical_source_destination(source_url): source_id
+        for source_id, source_url in state.source_urls.items()
+    }
+    new_source_count = 0
+    for result in tool_result:
+        if not isinstance(result, dict):
+            raise TypeError("Search result must be an object.")
+        result.pop("source_id", None)
+        if "error" in result:
+            continue
+        source_url = result.get("url")
+        try:
+            destination = canonical_source_destination(source_url)
+        except (TypeError, ValueError):
+            continue
+
+        source_id = canonical_ids.get(destination)
+        if source_id is None:
+            source_id = f"S{len(state.source_urls) + 1}"
+            state.source_urls[source_id] = source_url.strip()
+            canonical_ids[destination] = source_id
+            new_source_count += 1
+        result["source_id"] = source_id
+    return new_source_count
+
+
+def prepare_source_read(state, arguments):
+    if set(arguments) != {"source_id", "query"}:
+        raise ValueError(
+            "read_source_tool accepts only source_id and query."
+        )
+    source_id = arguments.get("source_id")
+    query = arguments.get("query")
+    if not isinstance(source_id, str) or not source_id.strip():
+        raise ValueError("source_id must be a non-empty string.")
+    source_id = source_id.strip()
+    if not isinstance(query, str) or not query.strip():
+        raise ValueError("query must be a non-empty string.")
+    if len(query.strip()) > MAX_SOURCE_READ_QUERY_CHARACTERS:
+        raise ValueError(
+            "query must be at most "
+            f"{MAX_SOURCE_READ_QUERY_CHARACTERS} characters."
+        )
+    if source_id not in state.source_urls:
+        raise ValueError("source_id was not returned by this Worker's searches.")
+    if state.source_reads_used >= MAX_WORKER_SOURCE_READS:
+        raise ValueError("Source read limit reached.")
+
+    source_url = state.source_urls[source_id]
+    canonical_source_destination(source_url)
+    state.source_reads_used += 1
+    return source_id, source_url
+
+
+def normalize_source_read_result(state, source_id, source_url, tool_result):
+    if not isinstance(tool_result, list) or len(tool_result) != 1:
+        raise ValueError("Source read must return exactly one result.")
+    result = tool_result[0]
+    if not isinstance(result, dict):
+        raise TypeError("Source read result must be an object.")
+    if canonical_source_destination(result.get("url")) != (
+        canonical_source_destination(source_url)
+    ):
+        raise ValueError("Source extraction returned a different destination.")
+
+    content = result.get("content")
+    content_characters = result.get("content_characters")
+    truncated = result.get("truncated")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Source read returned no content.")
+    if (
+        isinstance(content_characters, bool)
+        or not isinstance(content_characters, int)
+        or content_characters != len(content)
+    ):
+        raise ValueError("Source read returned inconsistent content size.")
+    if not isinstance(truncated, bool):
+        raise TypeError("Source read returned an invalid truncation flag.")
+
+    bounded_content = content[:MAX_SOURCE_CONTENT_CHARACTERS]
+    bounded_truncated = truncated or len(content) > len(bounded_content)
+
+    return [
+        {
+            "source_id": source_id,
+            "url": source_url,
+            "content": bounded_content,
+            "content_characters": len(bounded_content),
+            "truncated": bounded_truncated,
+            "source_reads_remaining": (
+                MAX_WORKER_SOURCE_READS - state.source_reads_used
+            ),
+        }
+    ]
 
 
 def get_refusal_text(response):
@@ -620,6 +797,10 @@ def finalize_agent_run(
         raise ValueError("Agent run model-turn usage is outside its limit.")
     if not 0 <= state.tool_calls_used <= MAX_WORKER_TOOL_CALLS:
         raise ValueError("Agent run tool-call usage is outside its limit.")
+    if not 0 <= state.source_reads_used <= MAX_WORKER_SOURCE_READS:
+        raise ValueError("Agent run source-read usage is outside its limit.")
+    if state.source_reads_used > state.tool_calls_used:
+        raise ValueError("Agent run source-read usage exceeds tool-call usage.")
     if not isinstance(status, AgentRunStatus) or status == AgentRunStatus.RUNNING:
         raise ValueError("Agent run result requires a terminal status.")
     if not isinstance(termination_reason, AgentTerminationReason):
@@ -677,6 +858,8 @@ def finalize_agent_run(
         model_turn_limit=MAX_WORKER_TURNS,
         tool_calls_used=state.tool_calls_used,
         tool_call_limit=MAX_WORKER_TOOL_CALLS,
+        source_reads_used=state.source_reads_used,
+        source_read_limit=MAX_WORKER_SOURCE_READS,
     )
 
 
@@ -686,6 +869,7 @@ def print_agent_run_result(result):
         f"Termination reason: {result.termination_reason.value}",
         f"Model turns: {result.model_turns_used}/{result.model_turn_limit}",
         f"Tool calls: {result.tool_calls_used}/{result.tool_call_limit}",
+        f"Source reads: {result.source_reads_used}/{result.source_read_limit}",
     ]
     if result.error_message is not None:
         lines.append(f"Error: {result.error_message}")
@@ -760,24 +944,90 @@ def print_supervisor_decision(decision_number, decision):
     )
 
 
-def execute_worker_tool_call(tool_request, tool_call_number, tavily_api_key):
+def execute_worker_tool_call(tool_request, state, tavily_api_key):
+    tool_call_number = state.tool_calls_used
     print_progress(
         f"Tool {tool_call_number}/{MAX_WORKER_TOOL_CALLS}",
         tool_request.name,
         "started",
         indent=2,
     )
+    read_number = None
+    source_id = None
+    source_url = None
     try:
         arguments = json.loads(tool_request.arguments)
         if not isinstance(arguments, dict):
             raise TypeError("Tool arguments must be a JSON object.")
+
+        tool_arguments = {}
+        if tool_request.name == READ_SOURCE_TOOL_NAME:
+            source_id, source_url = prepare_source_read(state, arguments)
+            read_number = state.source_reads_used
+            print_progress(
+                f"Read {read_number}/{MAX_WORKER_SOURCE_READS}",
+                f"{source_id} ({get_source_hostname(source_url)})",
+                "started",
+                indent=3,
+            )
+            tool_arguments["source_url"] = source_url
+
         tool_result = execute_research_tool(
             tool_request.name,
             arguments,
             tavily_api_key,
+            **tool_arguments,
         )
+        if tool_request.name in SEARCH_TOOL_NAMES:
+            new_source_count = register_search_sources(state, tool_result)
+            print_progress(
+                "Sources",
+                "Worker registry",
+                "updated",
+                (
+                    f"{new_source_count} new, "
+                    f"{len(state.source_urls)} available"
+                ),
+                indent=3,
+            )
+        elif tool_request.name == READ_SOURCE_TOOL_NAME:
+            tool_result = normalize_source_read_result(
+                state,
+                source_id,
+                source_url,
+                tool_result,
+            )
+            content_characters = tool_result[0]["content_characters"]
+            reads_remaining = MAX_WORKER_SOURCE_READS - state.source_reads_used
+            read_noun = "read" if reads_remaining == 1 else "reads"
+            print_progress(
+                f"Read {read_number}/{MAX_WORKER_SOURCE_READS}",
+                f"{source_id} ({get_source_hostname(source_url)})",
+                "completed",
+                (
+                    f"{content_characters} characters, "
+                    f"{reads_remaining} {read_noun} remaining"
+                ),
+                indent=3,
+            )
     except Exception as error:
-        tool_result = [{"error": str(error)[:300]}]
+        if read_number is not None:
+            reads_remaining = MAX_WORKER_SOURCE_READS - state.source_reads_used
+            read_noun = "read" if reads_remaining == 1 else "reads"
+            print_progress(
+                f"Read {read_number}/{MAX_WORKER_SOURCE_READS}",
+                f"{source_id} ({get_source_hostname(source_url)})",
+                "failed",
+                f"{reads_remaining} {read_noun} remaining",
+                indent=3,
+            )
+            error_message = (
+                "Selected-source read failed "
+                f"({type(error).__name__})."
+            )
+        else:
+            error_message = str(error)
+        tool_result = [{"error": error_message[:300]}]
 
     tool_status = (
         "failed" if any("error" in item for item in tool_result) else "completed"
@@ -819,13 +1069,21 @@ def run_research_worker_loop(
 
         state.model_turns_used += 1
         turn_number = state.model_turns_used
+        tool_calls_remaining = MAX_WORKER_TOOL_CALLS - state.tool_calls_used
+        source_reads_remaining = (
+            MAX_WORKER_SOURCE_READS - state.source_reads_used
+        )
+        tool_noun = "tool" if tool_calls_remaining == 1 else "tools"
+        source_read_noun = (
+            "source read" if source_reads_remaining == 1 else "source reads"
+        )
         print_progress(
             f"Turn {turn_number}/{MAX_WORKER_TURNS}",
             "Model",
             "started",
             (
-                f"{MAX_WORKER_TOOL_CALLS - state.tool_calls_used} "
-                "tools remaining"
+                f"{tool_calls_remaining} {tool_noun}, "
+                f"{source_reads_remaining} {source_read_noun} remaining"
             ),
             indent=2,
         )
@@ -978,7 +1236,7 @@ def run_research_worker_loop(
             try:
                 tool_output = execute_worker_tool_call(
                     tool_request,
-                    state.tool_calls_used,
+                    state,
                     tavily_api_key,
                 )
             except RunCancelled as error:

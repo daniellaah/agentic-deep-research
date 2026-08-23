@@ -24,7 +24,7 @@ only when a concrete release becomes easier to understand with them.
 
 ### Current release boundary
 
-- **Provider:** OpenAI-hosted models only in release 0.7.0
+- **Provider:** OpenAI-hosted models only in release 0.8.0
 - **API:** Responses API
 - **SDK:** official OpenAI Python SDK
 - **Client:** `OpenAI` with SDK retries disabled through `max_retries=0`
@@ -53,9 +53,9 @@ general model-provider abstraction.
 
 The accepted sequence is to establish an explicit Worker run contract in 0.7.0, add bounded
 selected-source reading in 0.8.0, and only then add the optional local Worker in 0.9.0. No local
-runtime configuration or dependency belongs to the current 0.7.0 CLI.
+runtime configuration or dependency belongs to the current 0.8.0 CLI.
 
-### Release 0.7.0 state
+### Release 0.8.0 state
 
 The runtime begins with a bounded Scope stage. Pydantic 2 defines
 `ClarificationAssessment` and `ResearchBrief`, and the official SDK's
@@ -80,11 +80,12 @@ three sources. The application merges only completed Worker results into state. 
 Each delegated Worker now crosses one explicit application-owned run boundary. A frozen
 `AgentRunRequest` contains its Worker number, rendered approved brief, and validated task. A
 mutable `AgentRunState` privately retains the ordered Responses items, model-turn and custom-tool
-usage, current status, termination reason, final notes, and concise error while the Worker runs.
+usage, an active source registry, source-read usage, current status, termination reason, final
+notes, and concise error while the Worker runs.
 A frozen `AgentRunResult` copies task identity, terminal status, bounded termination reason,
-notes or error, and used-versus-limit turn and tool accounting. Standard-library dataclasses and
-`StrEnum` represent this boundary because it is application state rather than model-generated
-Structured Output.
+notes or error, and used-versus-limit turn, tool, and read accounting. Standard-library
+dataclasses and `StrEnum` represent this boundary because it is application state rather than
+model-generated Structured Output.
 
 Terminal statuses are `completed`, `failed`, and `cancelled`. Bounded termination reasons are
 `completed`, `tool_limit`, `turn_limit`, `context_limit`, `refusal`, `model_error`, `tool_error`,
@@ -120,6 +121,15 @@ application-owned failure boundary instead of creating hidden provider retries.
 `agent_instructions.py` owns the plain instruction and model-input constants for every
 model-facing stage. `agent_tools.py` owns the tool schemas, functions, and dispatch.
 
+Search results with eligible primary HTTP(S) URLs receive application-issued `S1`, `S2`, ...
+identifiers scoped to one Worker. The application rejects credential-bearing, local-name,
+non-global IP-literal, malformed, explicit PDF, and non-HTTP(S) destinations before registration.
+`read_source_tool` accepts only one issued ID and a focused query; the application resolves the
+URL and Tavily Extract returns bounded relevant Markdown content. Each read consumes one of two
+read attempts and one of the existing five total tool attempts. The registry and extracted
+content disappear with Worker history, while the immutable result retains only used-versus-limit
+read accounting.
+
 ### Manual history retained from release 0.3.0
 
 The explicit `run_research_worker_loop` invokes `llm_call` repeatedly and maintains one ordered
@@ -154,25 +164,31 @@ Hosted capabilities remain later comparison points.
 
 - **Web search:** synchronous Tavily Python SDK
 - **Paper search:** arXiv query API with Atom XML parsing
+- **Selected-source reading:** synchronous Tavily Extract through the same Python SDK
 - **Tool execution:** synchronous custom function calls in response order
 
-`TAVILY_API_KEY` authenticates general web search. `tavily_search_tool` returns only title,
-content, and URL fields from Tavily results. `arxiv_search_tool` uses `requests` to call the
-arXiv API and the standard library to parse title, author, date, abstract URL, summary, and
-PDF URL fields from its Atom feed.
+`TAVILY_API_KEY` authenticates general web search and selected-source extraction.
+`tavily_search_tool` returns only title, content, and URL fields from Tavily results.
+`arxiv_search_tool` uses `requests` to call the arXiv API and the standard library to parse title,
+author, date, abstract URL, summary, and PDF URL fields from its Atom feed. `read_source_tool` uses
+one application-resolved URL and a focused query to request at most five relevant chunks through
+Tavily Extract. The application returns at most one selected-source result and truncates content
+to 6,000 characters.
 
 Each search returns at most three results. Tavily content and arXiv summaries are truncated
 to 2,000 characters per result before they enter manually replayed Worker history. Each Worker
-has at most six model turns and five tool execution attempts. These deterministic boundaries
-keep the explicit history loop observable without adding a compression stage.
+has at most six model turns, five total tool execution attempts, and two selected-source read
+attempts. These deterministic boundaries keep the explicit history loop observable without
+adding a compression stage.
 
-Both JSON tool definitions and both function implementations live in `agent_tools.py` so
+All three JSON tool definitions and implementations live in `agent_tools.py` so
 `deep_research.py` shows the Agent loop without network-client details.
 
-Release 0.3.0 deliberately omits selected-page reading, arbitrary URL fetching, network
-destination controls, citation allowlists, and output correction. `tavily-python` and
-`requests` keep the two tool implementations short while the application continues to own
-the Agent loop.
+Release 0.8.0 keeps discovery separate from reading and does not expose arbitrary URL fetching.
+The model can read only application-issued IDs from its own searches; full papers, PDFs, direct
+destination requests, browser behavior, citation allowlists, and output correction remain out of
+scope. `tavily-python` and `requests` keep the three tool implementations short while the
+application continues to own the Agent loop and destination allowlist.
 
 ## Command-Line Interface
 
@@ -186,10 +202,10 @@ The CLI has one initial question and emits concise live progress. The bounded Sc
 retains optional clarification answers, explicit ResearchBrief approval or cancellation,
 and at most one revision request followed by final approval. Release 0.6.0 adds visible
 Supervisor decisions, isolated Worker boundaries, central result merging, and the final
-Research stop reason. Release 0.7.0 adds one result summary for every started Worker containing
-status, termination reason, model-turn usage, and tool-call usage. Local input validation may
-repeat the current prompt, but it cannot create another model clarification round or brief
-revision.
+Research stop reason. Release 0.7.0 adds one result summary for every started Worker; release
+0.8.0 adds selected-source registration and read progress plus read usage to that summary. Local
+input validation may repeat the current prompt, but it cannot create another model clarification
+round or brief revision.
 
 The first release uses plain terminal text and the standard library. `python-dotenv` is
 limited to loading local `.env` configuration. A terminal rendering dependency may be
@@ -213,7 +229,8 @@ memory. Release 0.6.0 replaces the plan with in-memory `ResearchState`, Supervis
 decisions, and ordered Worker results. The CLI prints those boundaries, combined research
 notes, draft, critique, and final Markdown report. Release 0.7.0 replaces each plain successful
 Worker-result dictionary with an immutable `AgentRunResult` and also prints failed or cancelled
-results before the existing fatal boundary. It does not create a run directory.
+results before the existing fatal boundary. Release 0.8.0 keeps the source registry and selected
+content only in the active Worker's memory and adds no output file or run directory.
 
 Later releases may add artifacts only when their specifications require them. Historical
 generated artifacts remain local and ignored by Git.
@@ -236,7 +253,9 @@ Current variables:
 Use plain dictionaries and lists for Responses API history and tool results while they remain
 easy to understand. Release 0.7.0 introduces named standard-library dataclasses only for the
 explicit Worker request, mutable run state, and terminal result that later local inference,
-context sessions, and rollout consumers must share.
+context sessions, and rollout consumers must share. Release 0.8.0 extends the mutable state with
+one plain source dictionary and read counter and extends the result only with read usage and its
+limit; it adds no source class or retrieval abstraction.
 
 Pydantic 2 validates only model-generated application boundaries:
 `ClarificationAssessment`, `ResearchBrief`, `SupervisorDecision`, and nested
@@ -248,7 +267,7 @@ completed `AgentRunResult` values.
 
 ## Quality Checks
 
-Release 0.7.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
+Release 0.8.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
 its specification. Ruff, mypy, and an automated test suite remain intentionally omitted
 while the learning runtime is kept minimal.
 

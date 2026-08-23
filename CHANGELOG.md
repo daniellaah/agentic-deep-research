@@ -6,6 +6,24 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-23
+
+### Added
+
+- Added `read_source_tool` for one bounded Tavily Extract result selected by a per-Worker source
+  ID and focused within-source query.
+- Added an application-owned source registry, two-attempt source-read budget, safe destination
+  checks, and visible selected-source progress.
+- Added source-read usage and its limit to every immutable `AgentRunResult` and terminal summary.
+
+### Changed
+
+- Enriched eligible search results with Worker-local source IDs while keeping discovery distinct
+  from selected-source extraction.
+- Bounded every read to one registered non-PDF HTTP(S) destination and 6,000 content characters;
+  every permitted read consumes both its own budget and the existing total tool-call budget.
+- Updated the project version and arXiv `User-Agent` to 0.8.0 without adding a dependency.
+
 ## [0.7.0] - 2026-08-23
 
 ### Added

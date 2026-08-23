@@ -7,13 +7,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A learning-oriented deep-research CLI that adds model and Agent mechanisms one observable
-release at a time. Release 0.7.0 turns an initial question into an explicitly approved
+release at a time. Release 0.8.0 turns an initial question into an explicitly approved
 ResearchBrief, lets a Research Supervisor adaptively delegate bounded work to isolated Research
-Workers, and returns every Worker through an explicit application-owned run contract before the
-write-critic-revise workflow. The current runtime uses OpenAI-hosted models; the planned harness
-sequence next adds deep source reading, an optional local open-weight Worker, long-horizon context
-management, dependency-aware multi-agent scheduling, and batch rollouts before training work
-begins.
+Workers, and lets each Worker search, deliberately select, and read bounded source content before
+returning through an explicit application-owned run contract. The current runtime uses
+OpenAI-hosted models; the planned harness sequence next adds an optional local open-weight Worker,
+long-horizon context management, dependency-aware multi-agent scheduling, and batch rollouts
+before training work begins.
 
 ## Core Features
 
@@ -26,18 +26,19 @@ begins.
   one Worker or finish from the current application-owned `ResearchState`.
 - Bounds every delegated task to one primary subject or direct comparison with one through three
   evidence targets rather than report-sized completion requirements.
-- Lets the model select simple Tavily web search and arXiv paper search through two custom
-  function tools.
+- Lets the model search the web and arXiv, then read bounded relevant content from an eligible
+  primary URL selected through an application-issued source ID.
 - Runs at most four Workers sequentially with fresh application-owned Responses API history
-  and independent hard model-turn and tool-call limits.
+  and independent hard model-turn, tool-call, and selected-source read limits.
 - Represents every Worker as an immutable `AgentRunRequest`, private mutable `AgentRunState`, and
-  immutable `AgentRunResult` with visible status, termination reason, and budget usage.
+  immutable `AgentRunResult` with visible status, termination reason, and turn, tool, and read
+  usage.
 - Shows Scope decisions, pending briefs, approval, Supervisor decisions, Worker boundaries,
   Agent turns, tool selections, every intermediate result, report stages, and final report
   in consistently formatted terminal sections.
 - Keeps scoping data, the approved brief, ResearchState, research notes, draft, critique,
   and final report in memory without writing files.
-- Loads OpenAI, Tavily Search, and model configuration from environment variables.
+- Loads OpenAI, Tavily Search and Extract, and model configuration from environment variables.
 - Keeps the workflow in `deep_research.py`, detailed model instructions in
   `agent_instructions.py`, and tool details in `agent_tools.py`.
 
@@ -140,9 +141,15 @@ Evidence targets:
 ================================================================================
 
   [Worker 1/4] <task title> | STARTED
-    [Turn 1/6] Model | STARTED | 5 tools remaining
+    [Turn 1/6] Model | STARTED | 5 tools, 2 source reads remaining
     [Tool 1/5] tavily_search_tool | STARTED
+      [Sources] Worker registry | UPDATED | 3 new, 3 available
     [Tool 1/5] tavily_search_tool | COMPLETED
+    [Turn 2/6] Model | STARTED | 4 tools, 2 source reads remaining
+    [Tool 2/5] read_source_tool | STARTED
+      [Read 1/2] S1 (<source host>) | STARTED
+      [Read 1/2] S1 (<source host>) | COMPLETED | <characters> characters, 1 read remaining
+    [Tool 2/5] read_source_tool | COMPLETED
 ...
   [Worker 1/4] <task title> | COMPLETED | completed
 
@@ -153,6 +160,7 @@ Status: completed
 Termination reason: completed
 Model turns: <used>/6
 Tool calls: <used>/5
+Source reads: <used>/2
 ================================================================================
 
 ================================================================================
@@ -174,7 +182,7 @@ FINAL REPORT
 [Run] Deep research | COMPLETED
 ```
 
-Release 0.7.0 does not create a run directory or write application output files.
+Release 0.8.0 does not create a run directory or write application output files.
 Structured tracing is also not part of this release.
 
 ## Configuration
@@ -183,7 +191,7 @@ Structured tracing is also not part of this release.
 | --- | --- | --- |
 | `OPENAI_API_KEY` | Yes | API key used to authenticate with OpenAI. |
 | `MODEL_NAME` | Yes | OpenAI model supporting Structured Outputs and custom function tools. |
-| `TAVILY_API_KEY` | Yes | API key used for custom web search calls. |
+| `TAVILY_API_KEY` | Yes | API key used for Tavily web search and selected-source extraction. |
 
 The CLI automatically loads `.env` from the repository root. Values already present in
 the process environment take precedence over values in `.env`.
@@ -202,6 +210,8 @@ Research question
         → private AgentRunState with fresh history
             → tavily_search_tool
             → arxiv_search_tool
+            → application-issued per-Worker source IDs
+            → read_source_tool for one selected eligible source
         → immutable AgentRunResult
         → application merges only completed results into ResearchState
         → Supervisor observes the updated state
@@ -223,25 +233,28 @@ rendering of that state and returns a list containing zero or one next task. An 
 finishes Research; one task starts one isolated Research Worker with fresh ordered
 Responses API history. The Worker executes requested functions and links every result with
 its matching `call_id`; every expected outcome becomes an `AgentRunResult` with terminal status,
-bounded termination reason, notes or error, and used-versus-limit turn and tool accounting. Only
-completed results enter ResearchState, and only the approved brief and combined Worker notes
-reach Write. Research uses automatic tool selection while
-budget remains and `tool_choice="none"` after the fifth tool attempt. Each search returns at
-most three entries, long result text is bounded before entering history, and Supervisor requests
-use a fixed 4,000-token output limit. Worker requests use the configured model's default output
-limit because Responses API output limits include both reasoning tokens and visible notes. Model
-failures stop the workflow, while tool failures return to the active Worker so it can adapt within
-its remaining budget. The official SDK client disables automatic retries so every failed model
-request reaches the visible application failure boundary without a hidden repeated attempt.
+bounded termination reason, notes or error, and used-versus-limit turn, tool, and source-read
+accounting. Search results receive source IDs only for eligible primary HTTP(S) URLs in the active
+Worker. The read tool accepts an ID and focused query rather than a model-supplied URL, sends one
+resolved destination to Tavily Extract, and bounds selected content to 6,000 characters. Each
+Worker may attempt at most two reads, and every read also consumes one of its five total tool
+calls. Only completed results enter ResearchState, and only the approved brief and combined
+Worker notes reach Write. Research uses automatic tool selection while budget remains and
+`tool_choice="none"` after the fifth tool attempt. Each search returns at most three entries,
+long result text is bounded before entering history, and Supervisor requests use a fixed
+4,000-token output limit. Worker requests use the configured model's default output limit because
+Responses API output limits include both reasoning tokens and visible notes. Model failures stop
+the workflow, while tool failures return to the active Worker so it can adapt within its remaining
+budget. The official SDK client disables automatic retries so every failed model request reaches
+the visible application failure boundary without a hidden repeated attempt.
 
 ## Planned Release Direction
 
-The released 0.7.0 implementation is the current runnable baseline. Planned releases evolve
+The 0.8.0 implementation is the current runnable baseline. Planned releases evolve
 the same explicit runtime in this order:
 
 | Version | Primary mechanism | Intended outcome |
 | --- | --- | --- |
-| 0.8.0 | Deep retrieval Worker | A Worker can select and read bounded content from sources returned by search. |
 | 0.9.0 | Local open-weight Worker | The Worker can optionally use a local vLLM Responses-compatible model while hosted OpenAI stages remain available. |
 | 0.10.0 | Long-horizon context sessions | A long Worker run crosses explicit in-memory summary boundaries instead of replaying unbounded history. |
 | 0.11.0 | Bounded task graph and parallel workers | The Supervisor creates dependency-aware tasks and the application runs independent ready work concurrently. |
