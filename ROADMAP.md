@@ -23,7 +23,7 @@ and kept as simple as its learning objective allows.
 | 0.3.0 | Tool-using research Agent | A visible custom tool loop searches the web and arXiv, then produces a source-grounded report through write, critic, and revise stages | Verified |
 | 0.4.0 | Static structured planning | A one-shot planner creates a validated research plan that the research Agent executes sequentially | Verified |
 | 0.5.0 | Scoping and ResearchBrief | Bounded clarification and user approval establish an explicit research contract before planning | Verified |
-| 0.6.0 | Sequential research supervisor and workers | A supervisor repeatedly observes application-owned research state and delegates one bounded task to an isolated worker until it decides to finish or reaches a hard limit | In progress |
+| 0.6.0 | Sequential research supervisor and workers | A supervisor repeatedly observes application-owned research state and delegates one bounded task to an isolated worker until it decides to finish or reaches a hard limit | Verified |
 | 0.7.0 | Bounded parallel research workers | The supervisor may dispatch independent worker tasks concurrently while preserving centralized state ownership, budgets, and failure visibility | Planned |
 | 0.8.0 | Persistent research state and recovery | An interrupted run can resume from an application-owned snapshot without repeating completed research work | Planned |
 | Later | Advanced deep-research reliability and scale | Later mechanisms are selected from failures observed in the implemented releases | Direction |

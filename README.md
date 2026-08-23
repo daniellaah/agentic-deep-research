@@ -212,7 +212,8 @@ most three entries, long result text is bounded before entering history, and Sup
 use a fixed 4,000-token output limit. Worker requests use the configured model's default output
 limit because Responses API output limits include both reasoning tokens and visible notes. Model
 failures stop the workflow, while tool failures return to the active Worker so it can adapt within
-its remaining budget.
+its remaining budget. The official SDK client disables automatic retries so every failed model
+request reaches the visible application failure boundary without a hidden repeated attempt.
 
 ## Project Structure
 

@@ -906,7 +906,7 @@ def main():
         return 2
 
     try:
-        client = OpenAI(api_key=api_key)
+        client = OpenAI(api_key=api_key, max_retries=0)
         final_report = run_deep_research(
             client,
             model_name,

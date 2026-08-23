@@ -25,7 +25,7 @@ only when a concrete release becomes easier to understand with them.
 - **Provider:** OpenAI only
 - **API:** Responses API only
 - **SDK:** official OpenAI Python SDK
-- **Client:** `OpenAI`
+- **Client:** `OpenAI` with SDK retries disabled through `max_retries=0`
 - **Model configuration:** required through `MODEL_NAME`
 - **Credentials:** required through `OPENAI_API_KEY`
 
@@ -71,7 +71,9 @@ workflow visible. `run_scope_workflow` owns bounded intake and approval;
 merging; `run_research_worker` owns one visible Worker lifecycle;
 `run_research_worker_loop` owns its custom tool loop; and `run_report_workflow` owns the explicit
 Write-Critic-Revise sequence. `main` owns the CLI harness, client construction, top-level error
-handling, and final report output.
+handling, and final report output. The one SDK client uses `max_retries=0` so transient API
+failures remain visible at the first application-owned failure boundary instead of creating
+hidden provider retries.
 `agent_instructions.py` owns the plain instruction and model-input constants for every
 model-facing stage. `agent_tools.py` owns the tool schemas, functions, and dispatch.
 
