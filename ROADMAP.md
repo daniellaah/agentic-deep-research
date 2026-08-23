@@ -7,9 +7,11 @@ design unchanged. Each release adds one primary mechanism to the same small runn
 program and should make that mechanism observable without hiding it behind an agent
 framework.
 
-Near-term releases through 0.8.0 are concrete enough to guide specifications. Work beyond
-0.8.0 is intentionally described as one broad direction and will be divided into releases
-only after earlier runs and reports reveal the next useful learning problems.
+Near-term releases through 0.13.0 define a harness-first sequence: establish a stable Worker
+run contract, deepen retrieval, add an optional local open-weight Worker, manage long-horizon
+context, improve multi-agent scheduling, and only then add batch rollout generation. Work
+beyond 0.13.0 remains a broad direction until real runs and rollouts reveal the next useful
+learning problems.
 
 Every release must be specified before implementation, manually verified before tagging,
 and kept as simple as its learning objective allows.
@@ -24,9 +26,14 @@ and kept as simple as its learning objective allows.
 | 0.4.0 | Static structured planning | A one-shot planner creates a validated research plan that the research Agent executes sequentially | Released |
 | 0.5.0 | Scoping and ResearchBrief | Bounded clarification and user approval establish an explicit research contract before planning | Released |
 | 0.6.0 | Sequential research supervisor and workers | A supervisor repeatedly observes application-owned research state and delegates one bounded task to an isolated worker until it decides to finish or reaches a hard limit | Released |
-| 0.7.0 | Bounded parallel research workers | The supervisor may dispatch independent worker tasks concurrently while preserving centralized state ownership, budgets, and failure visibility | Planned |
-| 0.8.0 | Persistent research state and recovery | An interrupted run can resume from an application-owned snapshot without repeating completed research work | Planned |
-| Later | Advanced deep-research reliability and scale | Later mechanisms are selected from failures observed in the implemented releases | Direction |
+| 0.7.0 | Explicit Agent run contract | Every Worker returns a structured application-owned result with visible status, termination reason, and budget usage | Planned |
+| 0.8.0 | Deep retrieval Worker | A Worker searches, selects, and reads bounded source content before producing research notes | Planned |
+| 0.9.0 | Local open-weight Worker | The same Worker harness can run against either OpenAI or a local vLLM Responses-compatible endpoint | Planned |
+| 0.10.0 | Long-horizon context sessions | A Worker crosses visible in-memory session boundaries through bounded context summaries instead of replaying unbounded history | Planned |
+| 0.11.0 | Bounded task graph and parallel workers | The Supervisor may create a small dependency-aware task batch whose ready tasks run concurrently | Planned |
+| 0.12.0 | Failure-aware adaptive orchestration | Failed work becomes visible in shared state so the Supervisor can replace, narrow, or abandon it within hard limits | Planned |
+| 0.13.0 | Batch rollout runner | JSON or JSONL tasks can produce multiple concurrent rollouts through the same Worker harness and result contract | Planned |
+| Later | Training readiness, reliability, and research quality | Persistence, structured trajectories, evaluation, evidence reliability, SFT, and RL are selected from observed rollout failures | Direction |
 
 ## Phase 1: Model and Workflow Foundations
 
@@ -170,46 +177,141 @@ continues to implement the loop directly with the Responses API; it does not int
 Agent framework, generic Agent definitions, parallel execution, worker-to-worker delegation,
 research-quality gates, structured tracing, or evaluation in this release.
 
-### 0.7.0 — Bounded Parallel Research Workers
+## Phase 4: QUEST-Aligned Worker Harness
 
-Add concurrency only after the sequential supervisor-worker control loop is observable:
+### 0.7.0 — Explicit Agent Run Contract
 
-- let the supervisor emit a bounded batch of independent research tasks;
-- execute workers concurrently under explicit global and per-worker limits;
-- keep each worker's context, tool budget, task identity, and execution branch isolated;
-- merge results centrally into the shared evidence and task ledgers;
-- surface partial failures, retries, cancellations, overlap, and deduplication; and
-- preserve parent-child task relationships in shared state and deterministic final synthesis
-  inputs.
+Replace the Worker's implicit string-or-exception boundary with one visible, application-owned
+run contract:
 
-Parallelism is a scheduling optimization, not a new research policy. Dependent tasks stay
-sequential, and the system must retain a single-worker path for questions that do not
-benefit from decomposition.
+- define the request, mutable run state, and completed run result needed by one Worker;
+- retain ordered Responses items, turn usage, tool usage, status, and stopping information in
+  that state without introducing a workflow framework;
+- use a bounded termination vocabulary such as completed, turn limit, tool limit, context
+  limit, refusal, model error, tool error, and cancellation;
+- return one result containing the final notes, termination reason, and derived budget usage;
+- print the result summary at the Worker boundary; and
+- preserve the current synchronous OpenAI execution path, tools, Scope workflow, Supervisor
+  policy, and report workflow.
 
-## Phase 4: Long-Running Research
+This release introduces the smallest named runtime representation justified by future local
+inference and rollout consumers. It does not add selected-page reading, another provider,
+concurrency, persistence, structured tracing, evaluation, or training.
 
-### 0.8.0 — Persistent Research State and Recovery
+### 0.8.0 — Deep Retrieval Worker
 
-Make application-owned research state durable before adding more advanced reliability and
-quality mechanisms:
+Turn search results into sources that a Worker can deliberately select and read:
 
-- persist the approved brief, supervisor status, task records, compact worker results,
-  budgets, and stop reason in a versioned run snapshot under `runs/`;
-- resume an interrupted run without repeating completed worker tasks;
-- distinguish pending, active, completed, and failed work so restart behavior is explicit;
-- preserve sequential and bounded-parallel execution paths behind the same recovery model;
-- write snapshots at deterministic application-owned boundaries rather than from workers;
+```text
+search -> select returned source -> visit/read -> continue or finish
+```
+
+- add one bounded selected-source reading tool;
+- permit reading only source identifiers or URLs returned by the active Worker's searches;
+- enforce destination, content-size, result-count, and per-Worker reading limits in the
+  application;
+- keep search discovery distinct from page-content extraction;
+- make selected-source activity and remaining budget visible in the terminal; and
+- continue to produce one complete final Markdown report through the existing workflow.
+
+This release deepens the Worker's environment before increasing orchestration scale. Full-paper
+ingestion, arbitrary URL fetching, citation verification, caching, and evidence scoring remain
+out of scope.
+
+### 0.9.0 — Local Open-Weight Worker
+
+Run the research policy locally without replacing the complete hosted workflow at once:
+
+- let only the Research Worker choose between the current OpenAI endpoint and a local
+  open-weight model served through a vLLM Responses-compatible endpoint;
+- keep the official OpenAI Python SDK and the explicit Responses item loop as the shared client
+  and protocol when the selected local runtime supports them;
+- configure the Worker model and endpoint separately from Scope, Supervisor, and report stages;
+- keep OpenAI-hosted models available as teachers, baselines, and acceptance references;
+- complete one real run with a small open-weight model; and
+- document any selected-model limitations in reasoning-item replay, function tools, or response
+  formats instead of hiding them behind a general provider gateway.
+
+This release adds no SFT, RL, batch rollout generation, provider-neutral API, or local model
+server managed by the application.
+
+### 0.10.0 — Long-Horizon Context Sessions
+
+Let one Worker continue beyond a single replayable context without making state durable:
+
+- establish an application-owned context budget distinct from turn and tool budgets;
+- trigger a visible session boundary before the active history becomes unsafe to replay;
+- produce a bounded in-memory ResearchStateSummary containing completed work, visited sources,
+  unresolved questions, and the next useful actions;
+- start the next session from the task, approved brief, and validated summary rather than the
+  complete old history;
+- retain run-level budget and termination accounting across sessions; and
+- keep the full mechanism observable without writing a trace or recovery snapshot.
+
+This release studies context engineering, not persistent memory. Cross-run memory, resume,
+formal evidence state, and training trajectory output remain later concerns.
+
+## Phase 5: Adaptive Multi-Agent Scheduling
+
+### 0.11.0 — Bounded Task Graph and Parallel Workers
+
+Add concurrency only after the Worker harness, retrieval depth, local runtime path, and context
+boundaries are explicit:
+
+- let the Supervisor emit a bounded batch of tasks with stable task identifiers and dependency
+  declarations;
+- derive ready work from the task graph instead of asking models to mutate shared state;
+- execute independent ready tasks concurrently under explicit global and per-Worker limits;
+- keep dependent work sequential and retain a single-Worker path;
+- isolate each Worker's context, tools, budgets, and result; and
+- merge completed results centrally in deterministic task order for the next Supervisor decision
+  and final synthesis.
+
+Parallelism remains a scheduling mechanism rather than a second research policy. Retries,
+replacement tasks, durable queues, distributed execution, and quality scoring remain out of
+scope.
+
+### 0.12.0 — Failure-Aware Adaptive Orchestration
+
+Let the research subsystem respond to failed bounded work without terminating immediately:
+
+- represent task lifecycle as pending, running, completed, failed, or cancelled in in-memory
+  application state;
+- record a failed result separately from successful Worker notes;
+- let the Supervisor choose a bounded replacement, narrower follow-up, or explicit abandonment;
+- permit a bounded context handoff containing only the prior result or failure information needed
+  by a dependent task;
+- prevent repeated equivalent work and infinite recovery loops through application-owned limits;
   and
-- surface recovery, retry, and unrecoverable-state decisions in terminal output.
+- make partial completion and final stop reasons visible before the report workflow.
 
-This release adds resumability, not autonomous background execution or distributed task
-coordination. Context compression, durable cross-run memory, research-quality evaluation,
-structured tracing, and production-grade checkpoint infrastructure remain later concerns.
+This release adds adaptive failure handling, not persistence, background jobs, worker-to-worker
+communication, or a general task system.
 
-## Later Direction: Advanced Deep-Research Reliability and Scale
+## Phase 6: Rollout-Ready Execution
 
-After 0.8.0, improve evidence reliability, citation verification, human collaboration,
-context management, durable memory, structured tracing, repeatable evaluation, and frontier
-architecture comparisons based on failures observed in the earlier releases. These capabilities
-remain unscheduled until the implemented runs, reports, costs, and failure modes provide a clear
-reason to split them into new specifications.
+### 0.13.0 — Batch Rollout Runner
+
+Add a second entry path for repeatable research-policy sampling while preserving the interactive
+CLI:
+
+- accept a documented JSON or JSONL task format;
+- generate a configured number of independent rollouts for each task;
+- assign stable task and rollout identifiers and record model and sampling configuration;
+- schedule independent task-rollout pairs concurrently under one global limit;
+- return the same Agent run result contract used by interactive Workers;
+- write generated rollout artifacts under `runs/` without treating them as evaluation scores;
+  and
+- keep the interactive Scope, approval, Supervisor, and report experience complete and runnable.
+
+This release provides a QUEST-style batch execution boundary, not SFT, RL, reward computation,
+benchmark grading, trajectory quality filtering, or interrupted-run recovery.
+
+## Later Direction: Training Readiness, Reliability, and Research Quality
+
+After 0.13.0, select releases from failures observed in real local-model and batch rollouts.
+Candidate mechanisms include persistent run state and recovery, structured trajectory recording,
+repeatable evaluation, evidence and citation reliability, SFT data preparation, a first bounded
+SFT experiment, and agentic RL. Their order and release boundaries remain intentionally
+unscheduled until the harness produces the costs, failures, and behavior differences needed to
+justify them.

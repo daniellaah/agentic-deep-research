@@ -7,9 +7,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A learning-oriented deep-research CLI that adds model and Agent mechanisms one observable
-release at a time. The current release turns an initial question into an explicitly
-approved ResearchBrief, lets a Research Supervisor adaptively delegate bounded work to
-isolated Research Workers, and then runs an explicit write-critic-revise workflow.
+release at a time. Release 0.6.0 turns an initial question into an explicitly approved
+ResearchBrief, lets a Research Supervisor adaptively delegate bounded work to isolated
+Research Workers, and then runs an explicit write-critic-revise workflow. The current runtime
+uses OpenAI-hosted models; the planned harness sequence adds a stable Worker run contract, deep
+source reading, an optional local open-weight Worker, long-horizon context management,
+dependency-aware multi-agent scheduling, and batch rollouts before training work begins.
 
 ## Core Features
 
@@ -214,6 +217,27 @@ limit because Responses API output limits include both reasoning tokens and visi
 failures stop the workflow, while tool failures return to the active Worker so it can adapt within
 its remaining budget. The official SDK client disables automatic retries so every failed model
 request reaches the visible application failure boundary without a hidden repeated attempt.
+
+## Planned Release Direction
+
+The released 0.6.0 implementation remains the current runnable baseline. Planned releases evolve
+the same explicit runtime in this order:
+
+| Version | Primary mechanism | Intended outcome |
+| --- | --- | --- |
+| 0.7.0 | Explicit Agent run contract | A Worker returns visible status, termination, output, and budget usage through one stable application boundary. |
+| 0.8.0 | Deep retrieval Worker | A Worker can select and read bounded content from sources returned by search. |
+| 0.9.0 | Local open-weight Worker | The Worker can optionally use a local vLLM Responses-compatible model while hosted OpenAI stages remain available. |
+| 0.10.0 | Long-horizon context sessions | A long Worker run crosses explicit in-memory summary boundaries instead of replaying unbounded history. |
+| 0.11.0 | Bounded task graph and parallel workers | The Supervisor creates dependency-aware tasks and the application runs independent ready work concurrently. |
+| 0.12.0 | Failure-aware adaptive orchestration | Failed tasks remain visible so the Supervisor can replace, narrow, or abandon them within hard limits. |
+| 0.13.0 | Batch rollout runner | JSON or JSONL tasks generate multiple rollouts through the same Worker harness and result contract. |
+
+OpenAI-hosted models remain useful as optional teachers, baselines, and acceptance references.
+The project does not begin SFT or RL merely by adding a local inference path. Persistence,
+structured trajectories, evaluation, evidence reliability, SFT, and RL remain later directions
+selected from failures observed in real local-model and batch-rollout runs. See the
+[roadmap](ROADMAP.md) for release boundaries and explicit exclusions.
 
 ## Project Structure
 

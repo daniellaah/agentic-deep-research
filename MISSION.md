@@ -15,15 +15,18 @@ definitions and implementations.
 A contributor should be able to use the repository to understand and experiment with:
 
 - the OpenAI Responses API and response-item model;
+- the difference between a hosted teacher or baseline and a locally served open-weight
+  research policy using a compatible explicit Agent loop;
 - the difference between a single model call and an agent loop;
 - a complete function-tool calling loop;
-- agent harness concerns such as limits, errors, state, and stopping;
+- agent harness concerns such as run contracts, limits, errors, state, and stopping;
 - live progress and terminal-visible workflow output;
-- paper and web research tools;
+- paper and web research tools that separate source discovery from selected-source reading;
 - planning, adaptive retrieval, evidence tracking, and citation;
 - context engineering and long-horizon execution;
 - critique, verification, and iterative report refinement;
 - parallel research and orchestrator-worker multi-agent systems;
+- repeatable batch rollout generation through the same Worker harness used by interactive runs;
 - human approval, recovery, memory, and selected frontier techniques.
 
 ## Design Principles
@@ -65,6 +68,13 @@ requires it.
 Planning, memory, critique, parallelism, and multi-agent coordination should be introduced
 only after an earlier release makes the problem they solve observable.
 
+### Keep inference behavior reusable
+
+Interactive research, local-model experiments, and later batch rollouts should reuse one
+explicit Worker run contract and stopping model. A future training adapter may consume the
+same behavior and artifacts, but training infrastructure must not own or silently replace the
+application's Agent semantics.
+
 ### Ground reports in evidence
 
 Research output should evolve toward claim-level provenance, explicit uncertainty, source
@@ -84,6 +94,10 @@ The project succeeds when:
 - a user can watch the complete workflow and read the final report in the terminal;
 - the final report is distinguishable from unsupported model recall;
 - each major mechanism has a clear learning question and an observable effect;
+- the same Worker harness can eventually expose comparable hosted and local open-weight runs
+  without a provider-neutral platform layer;
+- batch rollout generation can eventually reuse the interactive Worker semantics rather than
+  maintain a second inference implementation; and
 - later complexity can be traced to limitations discovered in earlier releases.
 
 ## Non-Goals

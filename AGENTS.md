@@ -44,7 +44,10 @@ tracing is deferred until a release specification explicitly introduces it.
 - Provide a command-line interface with live progress output.
 - Do not support mid-run user interaction until a scoping release explicitly introduces
   bounded clarification and a ResearchBrief approval point.
-- Use only the OpenAI Responses API for model interaction.
+- Use the Responses API interaction model for model calls. Releases through 0.8.0 use
+  OpenAI-hosted models. Release 0.9.0 may introduce a local open-weight Research Worker
+  through a vLLM Responses-compatible endpoint when its active specification defines the
+  compatibility contract. Do not add another provider API or a provider-neutral gateway.
 - Implement a custom function-tool loop before adopting hosted tool orchestration so that
   the agent harness remains visible.
 - Introduce paper search and web search incrementally through release specifications.

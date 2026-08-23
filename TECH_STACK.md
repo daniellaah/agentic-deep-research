@@ -22,8 +22,10 @@ only when a concrete release becomes easier to understand with them.
 
 ## Model API
 
-- **Provider:** OpenAI only
-- **API:** Responses API only
+### Current release boundary
+
+- **Provider:** OpenAI-hosted models only in release 0.6.0
+- **API:** Responses API
 - **SDK:** official OpenAI Python SDK
 - **Client:** `OpenAI` with SDK retries disabled through `max_retries=0`
 - **Model configuration:** required through `MODEL_NAME`
@@ -31,6 +33,27 @@ only when a concrete release becomes easier to understand with them.
 
 The model name is configuration rather than a hard-coded project decision. This keeps the
 learning code stable while model availability changes.
+
+### Accepted harness direction
+
+The roadmap adopts a local-open-weight path without turning the project into a
+provider-neutral gateway. Release 0.9.0 is planned to let the Research Worker use either the
+current OpenAI-hosted endpoint or a local model served through a vLLM
+Responses-compatible endpoint. Scope, Supervisor, and report stages remain OpenAI-hosted in
+that first local-model release. OpenAI-hosted models remain useful as optional teachers,
+baselines, and acceptance references rather than the only research policy.
+
+The local path should continue to use the official OpenAI Python client and the explicit
+Responses item loop when the selected vLLM version and model support the required semantics.
+The 0.9.0 specification must verify function tools, response-item replay, refusal and incomplete
+responses, and any selected-model parser requirements against current
+[vLLM OpenAI-compatible server documentation](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/).
+It must record unsupported behavior explicitly instead of hiding incompatibilities behind a
+general model-provider abstraction.
+
+The accepted sequence is to establish an explicit Worker run contract in 0.7.0, add bounded
+selected-source reading in 0.8.0, and only then add the optional local Worker in 0.9.0. No local
+runtime configuration or dependency belongs to the current 0.6.0 CLI.
 
 ### Release 0.6.0 state
 
