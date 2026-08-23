@@ -8,9 +8,8 @@
 
 A learning-oriented deep-research CLI that adds model and Agent mechanisms one observable
 release at a time. The current release turns an initial question into an explicitly
-approved ResearchBrief, creates one validated static research plan from that contract,
-executes its tasks sequentially with a custom tool-using Agent loop, and then runs an
-explicit write-critic-revise workflow.
+approved ResearchBrief, lets a Research Supervisor adaptively delegate bounded work to
+isolated Research Workers, and then runs an explicit write-critic-revise workflow.
 
 ## Core Features
 
@@ -19,17 +18,19 @@ explicit write-critic-revise workflow.
   in one terminal round.
 - Creates and prints one Pydantic-validated ResearchBrief, requires explicit approval, and
   allows at most one revision before final approval.
-- Creates and prints one bounded Pydantic-validated research plan with ordered tasks and
-  completion criteria.
+- Uses a Pydantic-validated Supervisor decision containing zero or one next task to select
+  one Worker or finish from the current application-owned `ResearchState`.
+- Bounds every delegated task to one primary subject or direct comparison with one through three
+  evidence targets rather than report-sized completion requirements.
 - Lets the model select simple Tavily web search and arXiv paper search through two custom
   function tools.
-- Runs every plan task sequentially with fresh application-owned Responses API history and
-  independent hard model-turn and tool-call limits.
-- Shows Scope decisions, pending briefs, approval, the plan, task boundaries, Agent turns,
-  tool selections, every intermediate result, report stages, and final report in
-  consistently formatted terminal sections.
-- Keeps scoping data, the approved brief, plan, research notes, draft, critique, and final
-  report in memory without writing files.
+- Runs at most four Workers sequentially with fresh application-owned Responses API history
+  and independent hard model-turn and tool-call limits.
+- Shows Scope decisions, pending briefs, approval, Supervisor decisions, Worker boundaries,
+  Agent turns, tool selections, every intermediate result, report stages, and final report
+  in consistently formatted terminal sections.
+- Keeps scoping data, the approved brief, ResearchState, research notes, draft, critique,
+  and final report in memory without writing files.
 - Loads OpenAI, Tavily Search, and model configuration from environment variables.
 - Keeps the workflow in `deep_research.py`, detailed model instructions in
   `agent_instructions.py`, and tool details in `agent_tools.py`.
@@ -94,7 +95,7 @@ The command prints stage progress, every intermediate result, and the final repo
 in the terminal:
 
 ```text
-[1/6] Scope | STARTED
+[1/5] Scope | STARTED
   [Scope] Clarification assessment | COMPLETED | 2 questions
 
 ================================================================================
@@ -116,36 +117,39 @@ RESEARCH BRIEF | PENDING APPROVAL
 ================================================================================
 
 Action [approve/revise/cancel]: approve
-[1/6] Scope | COMPLETED | research brief approved
-[2/6] Plan | STARTED
-[2/6] Plan | COMPLETED | 2 tasks
+[1/5] Scope | COMPLETED | research brief approved
+[2/5] Research | STARTED
+  [Supervisor 1/4] Decision | STARTED
+  [Supervisor 1/4] Decision | COMPLETED | next task selected
 
 ================================================================================
-RESEARCH PLAN
+SUPERVISOR DECISION 1/4
 ================================================================================
-1. <task title>
-   Research question: <focused question>
-   Completion criteria:
-     - <observable evidence or coverage>
+Decision: Start one worker
+
+Title: <task title>
+Research question: <focused question>
+Evidence targets:
+- <small observable evidence requirement>
 ================================================================================
 
-[3/6] Research | STARTED | 2 tasks
-  [Task 1/2] <task title> | STARTED
-    [Turn 1/10] Model | STARTED | 8 tools remaining
-    [Tool 1/8] tavily_search_tool | STARTED
-    [Tool 1/8] tavily_search_tool | COMPLETED
+  [Worker 1/4] <task title> | STARTED
+    [Turn 1/6] Model | STARTED | 5 tools remaining
+    [Tool 1/5] tavily_search_tool | STARTED
+    [Tool 1/5] tavily_search_tool | COMPLETED
 ...
-  [Task 1/2] <task title> | COMPLETED
+  [Worker 1/4] <task title> | COMPLETED
 
 ================================================================================
-RESEARCH NOTES | TASK 1/2 | <task title>
+RESEARCH NOTES | WORKER 1 | <task title>
 ================================================================================
-<task research notes>
+<worker research notes>
 ================================================================================
 
-... each remaining task, followed by COMBINED RESEARCH NOTES, DRAFT, and CRITIQUE blocks ...
+... another Supervisor decision, or a visible finish decision ...
+... followed by COMBINED RESEARCH NOTES, DRAFT, and CRITIQUE blocks ...
 
-[6/6] Revise | COMPLETED
+[5/5] Revise | COMPLETED
 ================================================================================
 FINAL REPORT
 ================================================================================
@@ -155,7 +159,7 @@ FINAL REPORT
 [Run] Deep research | COMPLETED
 ```
 
-Release 0.5.0 does not create a run directory or write application output files.
+Release 0.6.0 does not create a run directory or write application output files.
 Structured tracing is also not part of this release.
 
 ## Configuration
@@ -177,12 +181,13 @@ Research question
     → optional clarification answers
     → validated ResearchBrief
     → explicit approval or one revision and final approval
-    → validated static research plan
-    → sequential plan tasks
-        → bounded Research Agent with fresh history
+    → Research Supervisor observes ResearchState
+        → selects one next task or finishes
+        → isolated Research Worker with fresh history
             → tavily_search_tool
             → arxiv_search_tool
-        → task-scoped research notes
+        → application merges Worker notes into ResearchState
+        → Supervisor observes the updated state
     → Write
     → Critic
     → Revise
@@ -193,23 +198,27 @@ Scope first makes one synchronous Structured Outputs request for a Pydantic
 `ClarificationAssessment`. It prints and collects at most three questions in one round,
 then makes a second request for a complete `ResearchBrief`. Invalid local input repeats
 only the current prompt. The user must approve the brief, cancel, or request one replacement
-brief and approve that revision. No planning or tool call begins before approval.
+brief and approve that revision. No Supervisor or research-tool call begins before approval.
 
-The planner receives only the approved brief and validates one Pydantic `ResearchPlan`.
-The application prints that immutable plan, then invokes the same Research Agent loop once
-per task in order. Each loop appends every model output item to fresh ordered history,
-executes requested functions, and links every result with its matching `call_id`. Only the
-approved brief and combined note text reach Write; Critic and Revise build on that same
-report context without receiving Scope history, the plan, or task metadata. Research uses
-automatic tool selection while budget remains and `tool_choice="none"` after the eighth
-tool attempt. Model failures stop the workflow, while tool failures are returned to the
-active Agent so it can adapt within its remaining budget.
+The application keeps a small `ResearchState` containing `approved_brief`, ordered
+`worker_results`, and `stop_reason`. Each stateless Supervisor call sees a deterministic
+rendering of that state and returns a list containing zero or one next task. An empty list
+finishes Research; one task starts one isolated Research Worker with fresh ordered
+Responses API history. The Worker executes requested functions and links every result with
+its matching `call_id`; only its final notes return to ResearchState. Only the approved
+brief and combined Worker notes reach Write. Research uses automatic tool selection while
+budget remains and `tool_choice="none"` after the fifth tool attempt. Each search returns at
+most three entries, long result text is bounded before entering history, and Supervisor requests
+use a fixed 4,000-token output limit. Worker requests use the configured model's default output
+limit because Responses API output limits include both reasoning tokens and visible notes. Model
+failures stop the workflow, while tool failures return to the active Worker so it can adapt within
+its remaining budget.
 
 ## Project Structure
 
 ```text
 .
-├── deep_research.py       # Scoping, planning, Agent loop, report workflow, and CLI
+├── deep_research.py       # Scope, Supervisor and Worker loops, report workflow, and CLI
 ├── agent_instructions.py  # Detailed instructions for every model stage
 ├── agent_tools.py         # Tool schemas, implementations, and dispatch
 ├── specs/                 # Release specifications

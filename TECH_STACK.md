@@ -32,7 +32,7 @@ only when a concrete release becomes easier to understand with them.
 The model name is configuration rather than a hard-coded project decision. This keeps the
 learning code stable while model availability changes.
 
-### Release 0.5.0 state
+### Release 0.6.0 state
 
 The runtime begins with a bounded Scope stage. Pydantic 2 defines
 `ClarificationAssessment` and `ResearchBrief`, and the official SDK's
@@ -42,29 +42,42 @@ three questions in one round and may make one replacement-brief request after a 
 revision. Standard-library terminal input collects answers and explicit approval; invalid
 local input repeats only the current prompt without making another model request.
 
-Planning cannot begin until the user approves a validated brief. The application renders
-that exact brief once and passes only the rendered approved brief into the existing static
-planner, task research, Write, Critic, and Revise. The original question, clarification
-artifacts, superseded brief, revision request, and approval commands remain isolated inside
-Scope. The `ResearchPlan` and `ResearchTask` schemas, immutable plan behavior, sequential
-task execution, fresh task histories, and independent model-turn and tool-call limits
-remain unchanged from release 0.4.0.
+Research cannot begin until the user approves a validated brief. The application renders
+that exact brief once and initializes a plain-dictionary `ResearchState`. A stateless
+Research Supervisor repeatedly observes the brief, completed Worker results, and derived
+remaining budget through a deterministic state rendering. Its Pydantic-validated
+`SupervisorDecision` contains one `next_tasks` list constrained to zero or one
+`ResearchTask`. An empty list finishes Research; one task starts one isolated Research
+Worker. A task contains one focused question about one primary subject or direct comparison and
+one through three `evidence_targets`; multiple examples are distributed across successive
+Workers. The Supervisor instructions prohibit report-sized tasks and requirements for more than
+three sources. The application merges only the Worker's final notes into state. The static
+`ResearchPlan` and Plan stage are removed.
 
 Every request remains stateless and uses `store=False`. The thin `llm_call` provider
 primitive supports mutually exclusive custom tools or a Pydantic text format, accepts an
-optional tool choice for requests with tools, and returns the official SDK `Response`
-without wrapping it. Research uses `tool_choice="auto"` while tool budget remains. Its
+optional tool choice and output-token limit, and returns the official SDK `Response` without
+wrapping it. Supervisor requests use a 4,000-token output limit. Worker requests omit an
+application-set output limit because Responses API output limits include both reasoning tokens
+and visible output, and real 4,000- and 8,000-token runs both ended before returning final notes.
+Required free-text extraction reports incomplete responses and refusals before checking for empty
+text. Research uses
+`tool_choice="auto"` while tool budget remains. Its
 final request after budget exhaustion uses the same Research instructions and tools with
 `tool_choice="none"`, plus one application-owned input directing the model to return notes
-from existing evidence. `research_workflow` owns scoping, planning, sequential research,
-and the three report stages. `main` owns the CLI harness, client construction, top-level
-error handling, and final report output. `agent_instructions.py` owns the plain instruction
-and model-input constants for every model-facing stage. `agent_tools.py` owns the tool
-schemas, functions, and dispatch.
+from existing evidence. `run_deep_research` keeps the top-level Scope, Research, and report
+workflow visible. `run_scope_workflow` owns bounded intake and approval;
+`run_research_supervisor_loop` owns Supervisor decisions, minimal state, dispatch, and result
+merging; `run_research_worker` owns one visible Worker lifecycle;
+`run_research_worker_loop` owns its custom tool loop; and `run_report_workflow` owns the explicit
+Write-Critic-Revise sequence. `main` owns the CLI harness, client construction, top-level error
+handling, and final report output.
+`agent_instructions.py` owns the plain instruction and model-input constants for every
+model-facing stage. `agent_tools.py` owns the tool schemas, functions, and dispatch.
 
 ### Manual history retained from release 0.3.0
 
-The explicit `agent_loop` invokes `llm_call` repeatedly and maintains one ordered
+The explicit `run_research_worker_loop` invokes `llm_call` repeatedly and maintains one ordered
 `input_items` list in application memory:
 
 1. start with the user input;
@@ -87,9 +100,10 @@ when specifying or implementing a multi-call release.
 
 ### Hosted capabilities
 
-Custom function tools and application-owned history are implemented before built-in
-OpenAI tools, MCP, programmatic tool calling, hosted deep-research models, or multi-agent
-features are adopted. Hosted capabilities remain later comparison points.
+Custom function tools, application-owned history, and the sequential supervisor-worker
+loop are implemented directly before built-in OpenAI tools, MCP, programmatic tool calling,
+hosted deep-research models, or framework-owned multi-agent orchestration are adopted.
+Hosted capabilities remain later comparison points.
 
 ## Research Tools
 
@@ -101,6 +115,11 @@ features are adopted. Hosted capabilities remain later comparison points.
 content, and URL fields from Tavily results. `arxiv_search_tool` uses `requests` to call the
 arXiv API and the standard library to parse title, author, date, abstract URL, summary, and
 PDF URL fields from its Atom feed.
+
+Each search returns at most three results. Tavily content and arXiv summaries are truncated
+to 2,000 characters per result before they enter manually replayed Worker history. Each Worker
+has at most six model turns and five tool execution attempts. These deterministic boundaries
+keep the explicit history loop observable without adding a compression stage.
 
 Both JSON tool definitions and both function implementations live in `agent_tools.py` so
 `deep_research.py` shows the Agent loop without network-client details.
@@ -118,11 +137,12 @@ The invocation shape is:
 uv run deep_research.py "Question"
 ```
 
-The CLI has one initial question and emits concise live progress. Release 0.5.0 adds one
-bounded mid-run intake flow: optional clarification answers, explicit ResearchBrief
-approval or cancellation, and at most one revision request followed by final approval.
-Local input validation may repeat the current prompt, but it cannot create another model
-clarification round or brief revision.
+The CLI has one initial question and emits concise live progress. The bounded Scope intake
+retains optional clarification answers, explicit ResearchBrief approval or cancellation,
+and at most one revision request followed by final approval. Release 0.6.0 adds visible
+Supervisor decisions, isolated Worker boundaries, central result merging, and the final
+Research stop reason. Local input validation may repeat the current prompt, but it cannot
+create another model clarification round or brief revision.
 
 The first release uses plain terminal text and the standard library. `python-dotenv` is
 limited to loading local `.env` configuration. A terminal rendering dependency may be
@@ -142,9 +162,9 @@ Release 0.2.0 adds `draft.md` and `critique.md` as visible intermediate workflow
 Release 0.3.0 removes file output to keep the first Agent release focused. Release 0.4.0
 keeps the validated plan and report-stage values in memory. Release 0.5.0 also keeps the
 clarification assessment, answers, pending and approved briefs, and approval state in
-memory. The CLI uses consistent plain-text sections to print progress, clarification
-questions, pending briefs, the plan, every task's notes, combined research notes, draft,
-critique, and final Markdown report. It does not create a run directory.
+memory. Release 0.6.0 replaces the plan with in-memory `ResearchState`, Supervisor
+decisions, and ordered Worker results. The CLI prints those boundaries, combined research
+notes, draft, critique, and final Markdown report. It does not create a run directory.
 
 Later releases may add artifacts only when their specifications require them. Historical
 generated artifacts remain local and ignored by Git.
@@ -168,14 +188,15 @@ Use plain dictionaries and lists for Responses API history, tool results, and ta
 collections while they remain easy to understand.
 
 Pydantic 2 validates only model-generated application boundaries:
-`ClarificationAssessment`, `ResearchBrief`, `ResearchPlan`, and `ResearchTask`. Bounded list
-sizes, required non-empty strings, and forbidden extra fields are runtime invariants.
-Clarification answers, approval state, Responses API histories, and task-result collections
-remain plain strings, lists, and dictionaries.
+`ClarificationAssessment`, `ResearchBrief`, `SupervisorDecision`, and nested
+`ResearchTask`. Bounded list sizes, required non-empty strings, and forbidden extra fields
+are runtime invariants. `ResearchState`, clarification answers, approval state, Responses
+API histories, and Worker-result collections remain plain strings, lists, and dictionaries.
+The current `ResearchState` keys are `approved_brief`, `worker_results`, and `stop_reason`.
 
 ## Quality Checks
 
-Release 0.5.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
+Release 0.6.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
 its specification. Ruff, mypy, and an automated test suite remain intentionally omitted
 while the learning runtime is kept minimal.
 

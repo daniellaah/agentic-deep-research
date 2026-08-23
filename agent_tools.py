@@ -5,7 +5,8 @@ import xml.etree.ElementTree as ET
 import requests
 from tavily import TavilyClient
 
-MAX_SEARCH_RESULTS = 5
+MAX_RESULTS_PER_SEARCH = 3
+MAX_RESULT_TEXT_CHARACTERS = 2000
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ATOM = {"atom": "http://www.w3.org/2005/Atom"}
 
@@ -16,7 +17,7 @@ SEARCH_PARAMETERS = {
         "max_results": {
             "type": "integer",
             "minimum": 1,
-            "maximum": MAX_SEARCH_RESULTS,
+            "maximum": MAX_RESULTS_PER_SEARCH,
         },
     },
     "required": ["query", "max_results"],
@@ -46,17 +47,20 @@ def tavily_search_tool(query, max_results, api_key):
         query=query,
         max_results=max_results,
     )
-    return [
-        {
-            "title": result.get("title", ""),
-            "content": result.get("content", ""),
-            "url": result.get("url", ""),
-        }
-        for result in response.get("results", [])[:max_results]
-    ]
+    results = []
+    for result in response.get("results", [])[:max_results]:
+        content = result.get("content") or ""
+        results.append(
+            {
+                "title": result.get("title", ""),
+                "content": content[:MAX_RESULT_TEXT_CHARACTERS],
+                "url": result.get("url", ""),
+            }
+        )
+    return results
 
 
-def atom_text(entry, path):
+def get_atom_text(entry, path):
     element = entry.find(path, ATOM)
     return " ".join(element.text.split()) if element is not None and element.text else ""
 
@@ -71,7 +75,7 @@ def arxiv_search_tool(query, max_results):
         },
         headers={
             "User-Agent": (
-                "agentic-deep-research/0.5.0 "
+                "agentic-deep-research/0.6.0 "
                 "(+https://github.com/daniellaah/agentic-deep-research)"
             )
         },
@@ -92,21 +96,23 @@ def arxiv_search_tool(query, max_results):
         )
         results.append(
             {
-                "title": atom_text(entry, "atom:title"),
+                "title": get_atom_text(entry, "atom:title"),
                 "authors": [
-                    atom_text(author, "atom:name")
+                    get_atom_text(author, "atom:name")
                     for author in entry.findall("atom:author", ATOM)
                 ],
-                "published": atom_text(entry, "atom:published")[:10],
-                "url": atom_text(entry, "atom:id"),
-                "summary": atom_text(entry, "atom:summary"),
+                "published": get_atom_text(entry, "atom:published")[:10],
+                "url": get_atom_text(entry, "atom:id"),
+                "summary": get_atom_text(entry, "atom:summary")[
+                    :MAX_RESULT_TEXT_CHARACTERS
+                ],
                 "pdf_url": pdf_url,
             }
         )
     return results
 
 
-def execute_tool(name, arguments, tavily_api_key):
+def execute_research_tool(name, arguments, tavily_api_key):
     query = arguments.get("query")
     max_results = arguments.get("max_results")
 
@@ -114,8 +120,10 @@ def execute_tool(name, arguments, tavily_api_key):
         raise ValueError("query must be a non-empty string.")
     if isinstance(max_results, bool) or not isinstance(max_results, int):
         raise ValueError("max_results must be an integer.")
-    if not 1 <= max_results <= MAX_SEARCH_RESULTS:
-        raise ValueError(f"max_results must be between 1 and {MAX_SEARCH_RESULTS}.")
+    if not 1 <= max_results <= MAX_RESULTS_PER_SEARCH:
+        raise ValueError(
+            f"max_results must be between 1 and {MAX_RESULTS_PER_SEARCH}."
+        )
 
     if name == "tavily_search_tool":
         return tavily_search_tool(query.strip(), max_results, tavily_api_key)

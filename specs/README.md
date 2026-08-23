@@ -10,6 +10,7 @@ written before implementation and remains the acceptance reference for its relea
 - [v0.3.0 — Tool-Using Research Agent](v0.3.0-tool-research-agent.md) — Verified
 - [v0.4.0 — Static Structured Research Planning](v0.4.0-static-research-planning.md) — Verified
 - [v0.5.0 — Scoping and ResearchBrief](v0.5.0-scoping-research-brief.md) — Verified
+- [v0.6.0 — Sequential Research Supervisor and Workers](v0.6.0-sequential-research-supervisor-workers.md) — In progress
 
 ## Required Sections
 

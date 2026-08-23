@@ -13,17 +13,41 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Added a Pydantic-validated `ResearchBrief` with explicit objective, audience, scope,
   exclusions, time horizon, source preferences, output requirements, and success criteria.
 - Added explicit brief approval, cancellation, and one optional revision with final
-  approval before planning can begin.
+  approval before research can begin.
 - Added local input validation that repeats only the current prompt without consuming a
   model call or expanding the bounded Scope workflow.
+- Added a Pydantic-validated Research Supervisor decision with a zero-or-one next-task
+  list.
+- Added application-owned `ResearchState` and sequential, isolated Research Workers that
+  retain the explicit custom function-tool loop.
 
 ### Changed
 
-- Expanded terminal progress from five stages to Scope, Plan, Research, Write, Critic, and
-  Revise.
+- Replaced the static Plan stage with visible Supervisor decisions, Worker boundaries,
+  central result merging, and an explicit stop reason.
+- Removed the unused Supervisor decision summary and nullable nested task, and tightened
+  the Supervisor prompt around concise standalone tasks.
+- Replaced report-oriented task completion criteria with one through three bounded evidence
+  targets; limited each assignment to one primary subject or direct comparison and prohibited
+  report-sized Worker assignments.
+- Reduced each Worker to six model turns, five tool execution attempts, and three results per
+  search; bounded long result text and Supervisor output tokens before adding retries or context
+  compaction.
+- Removed the fixed Worker output-token limit after real 4,000- and 8,000-token runs demonstrated
+  that reasoning tokens could consume the limit before final notes; Worker requests now use the
+  configured model's default.
+- Made required free-text boundaries distinguish incomplete responses and refusals from completed
+  responses with empty text.
+- Renamed functions and state fields around Scope, Supervisor, Worker, tool execution, response
+  validation, report workflow, and top-level execution so the code mirrors the system
+  architecture.
+- Extracted one Worker tool-call boundary, one Worker lifecycle boundary, and the fixed report
+  workflow without adding classes, modules, dependencies, or behavior.
+- Clarified that ResearchBrief output requirements and success criteria describe the final
+  Markdown report rather than the brief artifact itself.
 - Replaced the original question with the approved brief as the sole contract passed into
-  planning, task research, drafting, critique, and final revision.
-- Updated the project version and arXiv `User-Agent` to 0.5.0 without adding a dependency.
+  supervised research, drafting, critique, and final revision.
+- Updated the project version and arXiv `User-Agent` to 0.6.0 without adding a dependency.
 
 ## [0.4.0] - 2026-08-22
 

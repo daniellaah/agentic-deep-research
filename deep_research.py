@@ -1,4 +1,4 @@
-"""Scope, plan, and run tool-using research before refining a final report."""
+"""Scope and run supervised research before refining a final report."""
 
 import argparse
 import json
@@ -15,17 +15,19 @@ from agent_instructions import (
     BRIEF_REVISION_INSTRUCTIONS,
     CLARIFICATION_INSTRUCTIONS,
     CRITIC_INSTRUCTIONS,
-    PLANNING_INSTRUCTIONS,
     RESEARCH_BUDGET_EXHAUSTED_INPUT,
     RESEARCH_INSTRUCTIONS,
     REVISE_INSTRUCTIONS,
+    SUPERVISOR_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
 )
-from agent_tools import RESEARCH_TOOLS, execute_tool
+from agent_tools import RESEARCH_TOOLS, execute_research_tool
 
-MAX_AGENT_ITERATIONS = 10
-MAX_TOOL_CALLS = 8
-MAX_LOCAL_INPUT_LENGTH = 2000
+MAX_WORKER_TURNS = 6
+MAX_WORKER_TOOL_CALLS = 5
+MAX_RESEARCH_WORKERS = 4
+MAX_SUPERVISOR_OUTPUT_TOKENS = 4000
+MAX_LOCAL_INPUT_CHARACTERS = 2000
 OUTPUT_WIDTH = 80
 
 
@@ -41,9 +43,9 @@ BriefObjective = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=800),
 ]
-CompletionCriterion = Annotated[
+EvidenceTarget = Annotated[
     str,
-    StringConstraints(strip_whitespace=True, min_length=1, max_length=240),
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
 ]
 
 
@@ -83,7 +85,7 @@ class ResearchBrief(BaseModel):
 
 
 class ResearchTask(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
     title: Annotated[
         str,
@@ -93,18 +95,18 @@ class ResearchTask(BaseModel):
         str,
         StringConstraints(strip_whitespace=True, min_length=1, max_length=600),
     ]
-    completion_criteria: Annotated[
-        list[CompletionCriterion],
+    evidence_targets: Annotated[
+        list[EvidenceTarget],
         Field(min_length=1, max_length=3),
     ]
 
 
-class ResearchPlan(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class SupervisorDecision(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
 
-    tasks: Annotated[
+    next_tasks: Annotated[
         list[ResearchTask],
-        Field(min_length=1, max_length=4),
+        Field(min_length=0, max_length=1),
     ]
 
 
@@ -148,9 +150,9 @@ def read_local_input(prompt, *, choices=None, max_length=None):
         return value
 
 
-def task_count_text(task_count):
-    noun = "task" if task_count == 1 else "tasks"
-    return f"{task_count} {noun}"
+def format_worker_count(worker_count):
+    noun = "worker" if worker_count == 1 else "workers"
+    return f"{worker_count} {noun}"
 
 
 def llm_call(
@@ -161,6 +163,7 @@ def llm_call(
     tools=None,
     text_format=None,
     tool_choice=None,
+    max_output_tokens=None,
 ):
     if text_format is not None and (tools is not None or tool_choice is not None):
         raise ValueError(
@@ -169,40 +172,51 @@ def llm_call(
     if tool_choice is not None and tools is None:
         raise ValueError("tool_choice requires tools.")
 
+    request = {
+        "model": model_name,
+        "instructions": instructions,
+        "input": model_input,
+        "store": False,
+    }
+    if max_output_tokens is not None:
+        request["max_output_tokens"] = max_output_tokens
+
     if text_format is not None:
         return client.responses.parse(
-            model=model_name,
-            instructions=instructions,
-            input=model_input,
             text_format=text_format,
-            store=False,
+            **request,
         )
 
     if tools is None:
-        return client.responses.create(
-            model=model_name,
-            instructions=instructions,
-            input=model_input,
-            store=False,
-        )
+        return client.responses.create(**request)
 
     return client.responses.create(
-        model=model_name,
-        instructions=instructions,
-        input=model_input,
         tools=tools,
         tool_choice=tool_choice or "auto",
-        store=False,
+        **request,
     )
 
 
-def output_text(response, stage):
+def require_output_text(response, stage):
+    if response.status != "completed":
+        incomplete_details = getattr(response, "incomplete_details", None)
+        reason = getattr(incomplete_details, "reason", None)
+        detail = f": {reason}" if reason else ""
+        raise RuntimeError(f"{stage} response did not complete{detail}.")
+
+    for output in response.output:
+        if output.type != "message":
+            continue
+        for content in output.content:
+            if content.type == "refusal":
+                raise RuntimeError(f"{stage} was refused: {content.refusal[:300]}")
+
     if not response.output_text.strip():
         raise RuntimeError(f"{stage} returned no text.")
     return response.output_text
 
 
-def parsed_structured_output(response, expected_type, stage):
+def require_structured_output(response, expected_type, stage):
     if response.status != "completed":
         incomplete_details = getattr(response, "incomplete_details", None)
         reason = getattr(incomplete_details, "reason", None)
@@ -232,7 +246,7 @@ def assess_clarification(client, model_name, question):
         question,
         text_format=ClarificationAssessment,
     )
-    return parsed_structured_output(
+    return require_structured_output(
         response,
         ClarificationAssessment,
         "Clarification assessment",
@@ -254,13 +268,13 @@ def collect_clarification_answers(assessment):
         answers.append(
             read_local_input(
                 f"Answer {number}/{question_count}: ",
-                max_length=MAX_LOCAL_INPUT_LENGTH,
+                max_length=MAX_LOCAL_INPUT_CHARACTERS,
             )
         )
     return answers
 
 
-def clarification_input(question, assessment, answers):
+def build_clarification_input(question, assessment, answers):
     lines = ["## Original question", "", question]
     if not assessment.questions:
         lines.extend(["", "## Clarification", "", "No clarification was required."])
@@ -317,18 +331,18 @@ def format_research_brief(brief):
 """.strip()
 
 
-def create_research_brief(client, model_name, question, assessment, answers):
+def request_research_brief(client, model_name, question, assessment, answers):
     response = llm_call(
         client,
         model_name,
         BRIEF_INSTRUCTIONS,
-        clarification_input(question, assessment, answers),
+        build_clarification_input(question, assessment, answers),
         text_format=ResearchBrief,
     )
-    return parsed_structured_output(response, ResearchBrief, "Research brief")
+    return require_structured_output(response, ResearchBrief, "Research brief")
 
 
-def revise_research_brief(
+def request_revised_research_brief(
     client,
     model_name,
     question,
@@ -338,7 +352,7 @@ def revise_research_brief(
     revision_request,
 ):
     model_input = f"""
-{clarification_input(question, assessment, answers)}
+{build_clarification_input(question, assessment, answers)}
 
 ## Current research brief
 
@@ -355,14 +369,14 @@ def revise_research_brief(
         model_input,
         text_format=ResearchBrief,
     )
-    return parsed_structured_output(
+    return require_structured_output(
         response,
         ResearchBrief,
         "Research brief revision",
     )
 
 
-def scope_research(client, model_name, question):
+def run_scope_workflow(client, model_name, question):
     print_progress(
         "Scope",
         "Clarification assessment",
@@ -392,7 +406,7 @@ def scope_research(client, model_name, question):
         answers = []
 
     print_progress("Scope", "Research brief", "started", indent=1)
-    brief = create_research_brief(
+    brief = request_research_brief(
         client,
         model_name,
         question,
@@ -416,10 +430,10 @@ def scope_research(client, model_name, question):
 
     revision_request = read_local_input(
         "Revision request: ",
-        max_length=MAX_LOCAL_INPUT_LENGTH,
+        max_length=MAX_LOCAL_INPUT_CHARACTERS,
     )
     print_progress("Scope", "Research brief revision", "started", indent=1)
-    revised_brief = revise_research_brief(
+    revised_brief = request_revised_research_brief(
         client,
         model_name,
         question,
@@ -443,66 +457,143 @@ def scope_research(client, model_name, question):
     return revised_brief
 
 
-def parsed_research_plan(response):
-    return parsed_structured_output(response, ResearchPlan, "Plan")
+def format_research_task(task):
+    targets = "\n".join(f"- {target}" for target in task.evidence_targets)
+    return f"""
+Title: {task.title}
+
+Research question: {task.research_question}
+
+Evidence targets:
+
+{targets}
+""".strip()
 
 
-def create_research_plan(client, model_name, research_brief):
+def build_supervisor_input(research_state):
+    worker_results = research_state["worker_results"]
+    sections = [
+        "## Approved research brief",
+        "",
+        research_state["approved_brief"],
+        "",
+        "## Worker budget",
+        "",
+        f"Completed: {len(worker_results)}/{MAX_RESEARCH_WORKERS}",
+        f"Remaining: {MAX_RESEARCH_WORKERS - len(worker_results)}",
+        "",
+        "## Completed research",
+    ]
+    if not worker_results:
+        sections.extend(["", "None yet."])
+    for result in worker_results:
+        sections.extend(
+            [
+                "",
+                f"### Worker {result['worker_number']}: {result['task'].title}",
+                "",
+                format_research_task(result["task"]),
+                "",
+                "Notes:",
+                "",
+                result["notes"],
+            ]
+        )
+    return "\n".join(sections)
+
+
+def request_supervisor_decision(client, model_name, research_state):
     response = llm_call(
         client,
         model_name,
-        PLANNING_INSTRUCTIONS,
-        research_brief,
-        text_format=ResearchPlan,
+        SUPERVISOR_INSTRUCTIONS,
+        build_supervisor_input(research_state),
+        text_format=SupervisorDecision,
+        max_output_tokens=MAX_SUPERVISOR_OUTPUT_TOKENS,
     )
-    return parsed_research_plan(response)
+    return require_structured_output(
+        response,
+        SupervisorDecision,
+        "Research Supervisor",
+    )
 
 
-def print_research_plan(plan):
-    lines = []
-    for task_number, task in enumerate(plan.tasks, start=1):
-        if lines:
-            lines.append("")
-        lines.append(f"{task_number}. {task.title}")
-        lines.append(f"   Research question: {task.research_question}")
-        lines.append("   Completion criteria:")
-        for criterion in task.completion_criteria:
-            lines.append(f"     - {criterion}")
-    print_block("RESEARCH PLAN", "\n".join(lines))
+def print_supervisor_decision(decision_number, decision):
+    if not decision.next_tasks:
+        content = "Decision: Finish"
+    else:
+        content = f"""Decision: Start one worker
+
+{format_research_task(decision.next_tasks[0])}
+""".strip()
+    print_block(
+        f"SUPERVISOR DECISION {decision_number}/{MAX_RESEARCH_WORKERS}",
+        content,
+    )
 
 
-def task_input(research_brief, task_number, task):
-    criteria = "\n".join(f"- {criterion}" for criterion in task.completion_criteria)
+def build_worker_input(research_brief, worker_number, task):
     return f"""
 ## Approved research brief
 
 {research_brief}
 
-## Current task {task_number}: {task.title}
+## Worker {worker_number} task
 
-{task.research_question}
-
-## Completion criteria
-
-{criteria}
+{format_research_task(task)}
 """.strip()
 
 
-def agent_loop(
+def execute_worker_tool_call(tool_request, tool_call_number, tavily_api_key):
+    print_progress(
+        f"Tool {tool_call_number}/{MAX_WORKER_TOOL_CALLS}",
+        tool_request.name,
+        "started",
+        indent=2,
+    )
+    try:
+        arguments = json.loads(tool_request.arguments)
+        if not isinstance(arguments, dict):
+            raise TypeError("Tool arguments must be a JSON object.")
+        tool_result = execute_research_tool(
+            tool_request.name,
+            arguments,
+            tavily_api_key,
+        )
+    except Exception as error:
+        tool_result = [{"error": str(error)[:300]}]
+
+    tool_status = (
+        "failed" if any("error" in item for item in tool_result) else "completed"
+    )
+    print_progress(
+        f"Tool {tool_call_number}/{MAX_WORKER_TOOL_CALLS}",
+        tool_request.name,
+        tool_status,
+        indent=2,
+    )
+    return {
+        "type": "function_call_output",
+        "call_id": tool_request.call_id,
+        "output": json.dumps(tool_result, ensure_ascii=False),
+    }
+
+
+def run_research_worker_loop(
     client,
     model_name,
-    research_input,
+    initial_input,
     tavily_api_key,
 ):
-    history = [{"role": "user", "content": research_input}]
-    tool_calls = 0
+    worker_history = [{"role": "user", "content": initial_input}]
+    tool_call_count = 0
 
-    for iteration in range(1, MAX_AGENT_ITERATIONS + 1):
-        budget_exhausted = tool_calls == MAX_TOOL_CALLS
-        request_input = history
-        if budget_exhausted:
-            request_input = [
-                *history,
+    for iteration in range(1, MAX_WORKER_TURNS + 1):
+        tool_budget_exhausted = tool_call_count == MAX_WORKER_TOOL_CALLS
+        model_input = worker_history
+        if tool_budget_exhausted:
+            model_input = [
+                *worker_history,
                 {
                     "role": "user",
                     "content": RESEARCH_BUDGET_EXHAUSTED_INPUT,
@@ -510,89 +601,71 @@ def agent_loop(
             ]
 
         print_progress(
-            f"Turn {iteration}/{MAX_AGENT_ITERATIONS}",
+            f"Turn {iteration}/{MAX_WORKER_TURNS}",
             "Model",
             "started",
-            f"{MAX_TOOL_CALLS - tool_calls} tools remaining",
+            f"{MAX_WORKER_TOOL_CALLS - tool_call_count} tools remaining",
             indent=2,
         )
 
-        response = llm_call(
+        model_response = llm_call(
             client,
             model_name,
             RESEARCH_INSTRUCTIONS,
-            request_input,
+            model_input,
             RESEARCH_TOOLS,
-            tool_choice="none" if budget_exhausted else "auto",
+            tool_choice="none" if tool_budget_exhausted else "auto",
         )
-        history.extend(response.output)
+        worker_history.extend(model_response.output)
 
-        function_calls = [
-            item for item in response.output if item.type == "function_call"
+        tool_requests = [
+            item for item in model_response.output if item.type == "function_call"
         ]
 
-        if budget_exhausted and function_calls:
+        if tool_budget_exhausted and tool_requests:
             raise RuntimeError(
-                "Research Agent requested tools after its tool budget expired."
+                "Research Worker requested tools after its tool budget expired."
             )
 
-        if not function_calls:
+        if not tool_requests:
             print_progress(
-                f"Turn {iteration}/{MAX_AGENT_ITERATIONS}",
+                f"Turn {iteration}/{MAX_WORKER_TURNS}",
                 "Model",
                 "completed",
                 indent=2,
             )
-            return output_text(response, "Research")
+            return require_output_text(model_response, "Research")
 
-        for function_call in function_calls:
-            if tool_calls == MAX_TOOL_CALLS:
-                result = [{"error": "Tool call limit reached."}]
+        for tool_request in tool_requests:
+            if tool_call_count == MAX_WORKER_TOOL_CALLS:
                 print_progress(
                     "Tool limit",
-                    function_call.name,
+                    tool_request.name,
                     "skipped",
                     indent=2,
                 )
-            else:
-                tool_calls += 1
-                print_progress(
-                    f"Tool {tool_calls}/{MAX_TOOL_CALLS}",
-                    function_call.name,
-                    "started",
-                    indent=2,
+                worker_history.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": tool_request.call_id,
+                        "output": json.dumps(
+                            [{"error": "Tool call limit reached."}],
+                            ensure_ascii=False,
+                        ),
+                    }
                 )
-                try:
-                    arguments = json.loads(function_call.arguments)
-                    if not isinstance(arguments, dict):
-                        raise TypeError("Tool arguments must be a JSON object.")
-                    result = execute_tool(
-                        function_call.name,
-                        arguments,
-                        tavily_api_key,
-                    )
-                except Exception as error:
-                    result = [{"error": str(error)[:300]}]
+                continue
 
-                status = (
-                    "failed" if any("error" in item for item in result) else "completed"
+            tool_call_count += 1
+            worker_history.append(
+                execute_worker_tool_call(
+                    tool_request,
+                    tool_call_count,
+                    tavily_api_key,
                 )
-                print_progress(
-                    f"Tool {tool_calls}/{MAX_TOOL_CALLS}",
-                    function_call.name,
-                    status,
-                    indent=2,
-                )
-
-            history.append(
-                {
-                    "type": "function_call_output",
-                    "call_id": function_call.call_id,
-                    "output": json.dumps(result, ensure_ascii=False),
-                }
             )
 
-        if tool_calls == MAX_TOOL_CALLS:
+        if tool_call_count == MAX_WORKER_TOOL_CALLS:
             print_progress(
                 "Research",
                 "Tool budget",
@@ -602,132 +675,212 @@ def agent_loop(
             )
 
     raise RuntimeError(
-        f"Research Agent did not finish within {MAX_AGENT_ITERATIONS} model iterations."
+        f"Research Worker did not finish within {MAX_WORKER_TURNS} model turns."
     )
 
 
-def execute_research_plan(
+def run_research_worker(
     client,
     model_name,
     research_brief,
-    plan,
+    worker_number,
+    task,
     tavily_api_key,
 ):
-    task_notes = []
-    task_count = len(plan.tasks)
-    for task_number, task in enumerate(plan.tasks, start=1):
+    print_progress(
+        f"Worker {worker_number}/{MAX_RESEARCH_WORKERS}",
+        task.title,
+        "started",
+        indent=1,
+    )
+    try:
+        notes = run_research_worker_loop(
+            client,
+            model_name,
+            build_worker_input(research_brief, worker_number, task),
+            tavily_api_key,
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"Research Worker {worker_number} ({task.title}) failed: {error}"
+        ) from error
+
+    print_progress(
+        f"Worker {worker_number}/{MAX_RESEARCH_WORKERS}",
+        task.title,
+        "completed",
+        indent=1,
+    )
+    print_block(
+        f"RESEARCH NOTES | WORKER {worker_number} | {task.title}",
+        notes,
+    )
+    return {
+        "worker_number": worker_number,
+        "task": task,
+        "notes": notes,
+    }
+
+
+def run_research_supervisor_loop(client, model_name, research_brief, tavily_api_key):
+    research_state = {
+        "approved_brief": research_brief,
+        "worker_results": [],
+        "stop_reason": None,
+    }
+
+    while len(research_state["worker_results"]) < MAX_RESEARCH_WORKERS:
+        worker_number = len(research_state["worker_results"]) + 1
         print_progress(
-            f"Task {task_number}/{task_count}",
-            task.title,
+            f"Supervisor {worker_number}/{MAX_RESEARCH_WORKERS}",
+            "Decision",
             "started",
             indent=1,
         )
-        try:
-            notes = agent_loop(
-                client,
-                model_name,
-                task_input(research_brief, task_number, task),
-                tavily_api_key,
-            )
-        except Exception as error:
+        decision = request_supervisor_decision(client, model_name, research_state)
+        if not decision.next_tasks and not research_state["worker_results"]:
             raise RuntimeError(
-                f"Research task {task_number} ({task.title}) failed: {error}"
-            ) from error
-        task_notes.append(notes)
+                "Research Supervisor finished before any worker completed."
+            )
         print_progress(
-            f"Task {task_number}/{task_count}",
-            task.title,
+            f"Supervisor {worker_number}/{MAX_RESEARCH_WORKERS}",
+            "Decision",
             "completed",
+            "finish" if not decision.next_tasks else "next task selected",
             indent=1,
         )
-        print_block(
-            f"RESEARCH NOTES | TASK {task_number}/{task_count} | {task.title}",
-            notes,
+        print_supervisor_decision(worker_number, decision)
+
+        if not decision.next_tasks:
+            research_state["stop_reason"] = "Research Supervisor selected no next task."
+            break
+
+        task = decision.next_tasks[0]
+        worker_result = run_research_worker(
+            client,
+            model_name,
+            research_brief,
+            worker_number,
+            task,
+            tavily_api_key,
         )
+        research_state["worker_results"].append(worker_result)
 
-    return "\n\n".join(task_notes)
+    if research_state["stop_reason"] is None:
+        research_state["stop_reason"] = "Research worker limit reached."
 
-
-def research_workflow(client, model_name, question, tavily_api_key):
-    print_progress("1/6", "Scope", "started")
-    brief = scope_research(client, model_name, question)
-    research_brief = format_research_brief(brief)
-    print_progress("1/6", "Scope", "completed", "research brief approved")
-
-    print_progress("2/6", "Plan", "started")
-    plan = create_research_plan(client, model_name, research_brief)
-    task_count = len(plan.tasks)
-    print_progress("2/6", "Plan", "completed", task_count_text(task_count))
-    print_research_plan(plan)
-
-    print_progress("3/6", "Research", "started", task_count_text(task_count))
-    research_notes = execute_research_plan(
-        client,
-        model_name,
-        research_brief,
-        plan,
-        tavily_api_key,
+    print_progress(
+        "Supervisor",
+        "Research",
+        "completed",
+        research_state["stop_reason"],
+        indent=1,
     )
-    print_progress("3/6", "Research", "completed", task_count_text(task_count))
-    print_block("COMBINED RESEARCH NOTES", research_notes)
+    return research_state
 
-    print_progress("4/6", "Write", "started")
-    context = f"""
+
+def format_combined_research_notes(research_state):
+    sections = []
+    for result in research_state["worker_results"]:
+        sections.append(
+            f"""## Worker {result['worker_number']}: {result['task'].title}
+
+{format_research_task(result['task'])}
+
+### Notes
+
+{result['notes']}"""
+        )
+    return "\n\n".join(sections)
+
+
+def run_report_workflow(client, model_name, brief_text, combined_notes):
+    print_progress("3/5", "Write", "started")
+    write_input = f"""
 
 ## Approved research brief
 
-{research_brief}
+{brief_text}
 
 ## Research notes
 
-{research_notes}
+{combined_notes}
 """.strip()
-    draft = output_text(
-        llm_call(client, model_name, WRITE_INSTRUCTIONS, context), "Write"
+    draft = require_output_text(
+        llm_call(client, model_name, WRITE_INSTRUCTIONS, write_input), "Write"
     )
-    print_progress("4/6", "Write", "completed")
+    print_progress("3/5", "Write", "completed")
     print_block("DRAFT", draft)
 
-    print_progress("5/6", "Critic", "started")
-    context += f"""
+    print_progress("4/5", "Critic", "started")
+    critic_input = f"""{write_input}
 
 ## Draft
 
 {draft}
 """
-    critique = output_text(
-        llm_call(client, model_name, CRITIC_INSTRUCTIONS, context), "Critic"
+    critique = require_output_text(
+        llm_call(client, model_name, CRITIC_INSTRUCTIONS, critic_input), "Critic"
     )
-    print_progress("5/6", "Critic", "completed")
+    print_progress("4/5", "Critic", "completed")
     print_block("CRITIQUE", critique)
 
-    print_progress("6/6", "Revise", "started")
-    context += f"""
+    print_progress("5/5", "Revise", "started")
+    revise_input = f"""{critic_input}
 
 ## Critique
 
 {critique}
 """
 
-    final_report = output_text(
-        llm_call(client, model_name, REVISE_INSTRUCTIONS, context), "Revise"
+    final_report = require_output_text(
+        llm_call(client, model_name, REVISE_INSTRUCTIONS, revise_input), "Revise"
     )
-    print_progress("6/6", "Revise", "completed")
+    print_progress("5/5", "Revise", "completed")
     return final_report
 
 
-def parse_question():
+def run_deep_research(client, model_name, question, tavily_api_key):
+    print_progress("1/5", "Scope", "started")
+    approved_brief = run_scope_workflow(client, model_name, question)
+    brief_text = format_research_brief(approved_brief)
+    print_progress("1/5", "Scope", "completed", "research brief approved")
+
+    print_progress("2/5", "Research", "started")
+    research_state = run_research_supervisor_loop(
+        client,
+        model_name,
+        brief_text,
+        tavily_api_key,
+    )
+    completed_worker_count = len(research_state["worker_results"])
+    combined_notes = format_combined_research_notes(research_state)
+    print_progress(
+        "2/5",
+        "Research",
+        "completed",
+        format_worker_count(completed_worker_count),
+    )
+    print_block("COMBINED RESEARCH NOTES", combined_notes)
+
+    return run_report_workflow(
+        client,
+        model_name,
+        brief_text,
+        combined_notes,
+    )
+
+
+def parse_cli_question():
     parser = argparse.ArgumentParser(
-        description=(
-            "Scope, plan, and run tool-using research, then refine its report."
-        ),
+        description="Scope and run supervised research, then refine its report.",
     )
     parser.add_argument("question", help="Research question to investigate")
     return parser.parse_args().question.strip()
 
 
 def main():
-    question = parse_question()
+    question = parse_cli_question()
     if not question:
         print_error("Question must not be empty.")
         return 2
@@ -754,7 +907,7 @@ def main():
 
     try:
         client = OpenAI(api_key=api_key)
-        final_report = research_workflow(
+        final_report = run_deep_research(
             client,
             model_name,
             question,
