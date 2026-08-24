@@ -8,8 +8,8 @@ program and should make that mechanism observable without hiding it behind an ag
 framework.
 
 Near-term releases through 0.13.0 define a harness-first sequence: establish a stable Worker
-run contract, deepen retrieval, add an optional local open-weight Worker, manage long-horizon
-context, improve multi-agent scheduling, and only then add batch rollout generation. Work
+run contract, deepen retrieval, compare explicit hosted providers, manage long-horizon context,
+improve multi-agent scheduling, and only then add batch rollout generation. Work
 beyond 0.13.0 remains a broad direction until real runs and rollouts reveal the next useful
 learning problems.
 
@@ -29,7 +29,7 @@ and kept as simple as its learning objective allows.
 | 0.7.0 | Explicit Agent run contract | Every Worker returns a structured application-owned result with visible status, termination reason, and budget usage | Released |
 | 0.8.0 | Deep retrieval Worker | A Worker searches, selects, and reads bounded source content before producing research notes | Released |
 | 0.9.0 | Local open-weight Worker | The same Worker harness can run against either OpenAI or a local vLLM Responses-compatible endpoint | Released |
-| 0.10.0 | Long-horizon context sessions | A Worker crosses visible in-memory session boundaries through bounded context summaries instead of replaying unbounded history | Planned |
+| 0.10.0 | Long-horizon context sessions and global hosted-provider selection | One selected OpenAI or DeepSeek model runs the complete workflow, and each Worker crosses visible in-memory session boundaries through bounded context summaries instead of replaying unbounded history | In progress |
 | 0.11.0 | Bounded task graph and parallel workers | The Supervisor may create a small dependency-aware task batch whose ready tasks run concurrently | Planned |
 | 0.12.0 | Failure-aware adaptive orchestration | Failed work becomes visible in shared state so the Supervisor can replace, narrow, or abandon it within hard limits | Planned |
 | 0.13.0 | Batch rollout runner | JSON or JSONL tasks can produce multiple concurrent rollouts through the same Worker harness and result contract | Planned |
@@ -239,6 +239,11 @@ server managed by the application.
 
 Let one Worker continue beyond a single replayable context without making state durable:
 
+- retire the release 0.9.0 local vLLM runtime path and require one run-level `LLM_PROVIDER`
+  selection, `openai` or `deepseek`, for every Scope, Supervisor, Worker, summary, Write,
+  Critic, and Revise model request;
+- read the selected provider's API key and model name from environment configuration, with
+  DeepSeek V4 Flash as the real-endpoint acceptance baseline rather than a hard-coded model;
 - establish an application-owned context budget distinct from turn and tool budgets;
 - trigger a visible session boundary before the active history becomes unsafe to replay;
 - produce a bounded in-memory ResearchStateSummary containing completed work, visited sources,
@@ -255,8 +260,8 @@ formal evidence state, and training trajectory output remain later concerns.
 
 ### 0.11.0 — Bounded Task Graph and Parallel Workers
 
-Add concurrency only after the Worker harness, retrieval depth, local runtime path, and context
-boundaries are explicit:
+Add concurrency only after the Worker harness, retrieval depth, global hosted-provider path, and
+context boundaries are explicit:
 
 - let the Supervisor emit a bounded batch of tasks with stable task identifiers and dependency
   declarations;
@@ -309,7 +314,7 @@ benchmark grading, trajectory quality filtering, or interrupted-run recovery.
 
 ## Later Direction: Training Readiness, Reliability, and Research Quality
 
-After 0.13.0, select releases from failures observed in real local-model and batch rollouts.
+After 0.13.0, select releases from failures observed in real hosted-model and batch rollouts.
 Candidate mechanisms include persistent run state and recovery, structured trajectory recording,
 repeatable evaluation, evidence and citation reliability, SFT data preparation, a first bounded
 SFT experiment, and agentic RL. Their order and release boundaries remain intentionally

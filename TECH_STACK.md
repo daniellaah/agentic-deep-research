@@ -24,50 +24,51 @@ only when a concrete release becomes easier to understand with them.
 
 ### Current release boundary
 
-- **Hosted workflow:** OpenAI-hosted Scope, Supervisor, Write, Critic, and Revise
-- **Research Worker:** selected once per run as OpenAI-hosted or local open-weight through vLLM
-- **API:** Responses API on both Worker paths
+- **LLM provider:** required once per run as `openai` or `deepseek`
+- **Workflow routing:** the selected provider and model serve Scope, Supervisor, every Research
+  Worker, context summary, Write, Critic, and Revise
+- **API:** Responses API on both provider paths
 - **SDK:** official OpenAI Python SDK
-- **Clients:** one hosted `OpenAI` client and, only for a local Worker, one separate `OpenAI`
-  client; both disable SDK retries through `max_retries=0`
-- **Hosted configuration:** `OPENAI_API_KEY` and `MODEL_NAME`
-- **Worker selection:** optional `WORKER_BACKEND`, defaulting to `openai`
-- **Local Worker configuration:** `LOCAL_WORKER_BASE_URL`, `LOCAL_WORKER_API_KEY`, and
-  `LOCAL_WORKER_MODEL_NAME`
+- **Clients:** exactly one `OpenAI` SDK client per run; it uses the SDK default OpenAI endpoint or
+  the official `https://api.deepseek.com` base URL and disables SDK retries with `max_retries=0`
+- **Provider selection:** required `LLM_PROVIDER`
+- **OpenAI configuration:** `OPENAI_API_KEY` and `OPENAI_MODEL_NAME`
+- **DeepSeek configuration:** `DEEPSEEK_API_KEY` and `DEEPSEEK_MODEL_NAME`
+- **Shared tool configuration:** `TAVILY_API_KEY`
 
-Model names remain configuration rather than hard-coded project decisions. The local reference
-model in the release specification is an acceptance baseline, not an application default.
+Both model names are operator-configured. DeepSeek V4 Flash is the release's real-endpoint
+acceptance baseline, not a hard-coded runtime default.
 
-### Local Worker compatibility decision
+### Global provider compatibility decision
 
-Release 0.9.0 lets only the Research Worker use either the current OpenAI endpoint or a local
-model served through a vLLM Responses-compatible endpoint. Scope, Supervisor, and report stages
-remain OpenAI-hosted. OpenAI-hosted Workers remain useful as baselines and acceptance references.
+Release 0.10.0 removes the release 0.9.0 local vLLM runtime path. `LLM_PROVIDER` now selects one
+hosted provider before Scope, and every model call in that run uses the selected provider's single
+client and configured model. The application does not route stages independently, substitute
+credentials, or fall back to the other provider.
 
-The local compatibility baseline is vLLM 0.20.2 with `Qwen/Qwen3-1.7B` and the reasoning,
-structured-output, automatic-tool-choice, and Hermes parser flags documented by the official
-[vLLM Responses tool example](https://docs.vllm.ai/en/v0.20.2/examples/online_serving/openai_responses_client_with_tools/).
-The application neither depends on vLLM nor manages its server. It changes only the official
-SDK client's base URL, API key, and request model for Worker calls.
+DeepSeek's official [Responses API guide](https://api-docs.deepseek.com/guides/responses_api/)
+documents the current compatibility boundary: `deepseek-v4-flash` supports function tools,
+JSON-schema `text.format`, `max_output_tokens`, manual input-item replay, and Responses-style usage.
+The endpoint is stateless and does not support `previous_response_id`, Conversations, or
+`context_management`, which matches the application's explicit application-owned context-session
+mechanism.
 
-The release specification also records one manually verified Apple Silicon operator profile:
-vLLM-Metal with `mlx-community/Qwen3.5-9B-4bit`, the `qwen3` reasoning parser, and the
-`qwen3_coder` tool parser. The official
-[vLLM-Metal supported-model table](https://github.com/vllm-project/vllm-metal/blob/main/docs/supported_models.md)
-lists the Qwen3.5 family as supported. This platform profile satisfies the same application
-contract and does not replace the portable vLLM 0.20.2 reference or add a project dependency.
+DeepSeek documents that `parallel_tool_calls` is ignored and parallel tool calling is always
+enabled. Release 0.10.0 therefore accepts multiple function calls in one response, executes every
+budget-permitted call synchronously in response order, and appends one linked output for every
+returned call. The application does not depend on the provider honoring the request hint.
 
-Both paths use the same strict tool definitions, `store=False`, complete ordered output-item
-replay, linked function outputs, budgets, and result classification. vLLM 0.20.2 accepts local
-reasoning-text items but rejects encrypted reasoning input; the selected local model does not
-produce OpenAI-encrypted reasoning. Its Responses protocol represents output-token exhaustion as
-`incomplete` but does not guarantee OpenAI refusal content items for the selected model. These
-differences remain documented and visible as existing Worker outcomes instead of being hidden by
-a provider gateway or fallback request. See the
-[release specification](specs/v0.9.0-local-open-weight-worker.md) for the exact compatibility
-contract and primary sources.
+Both provider paths use the same strict tool definitions, `store=False`, complete ordered output-item
+replay, linked function outputs, budgets, and result classification. DeepSeek does not support
+server-side storage on this surface and returns `store: false`. Compatibility differences remain
+documented and visible as existing Worker outcomes instead of being hidden by a provider gateway
+or fallback request. See the
+[release specification](specs/v0.10.0-long-horizon-context-sessions.md#llm-provider-and-deepseek-compatibility-contract)
+for the exact compatibility contract and primary sources. The released
+[v0.9.0 specification](specs/v0.9.0-local-open-weight-worker.md) remains the historical record of
+the removed local path.
 
-### Release 0.9.0 state
+### Current runnable state
 
 The runtime begins with a bounded Scope stage. Pydantic 2 defines
 `ClarificationAssessment` and `ResearchBrief`, and the official SDK's
@@ -75,7 +76,7 @@ The runtime begins with a bounded Scope stage. Pydantic 2 defines
 one clarification-assessment request and one initial-brief request. It may ask at most
 three questions in one round and may make one replacement-brief request after a user
 revision. Standard-library terminal input collects answers and explicit approval; invalid
-local input repeats only the current prompt without making another model request.
+terminal input repeats only the current prompt without making another model request.
 
 Research cannot begin until the user approves a validated brief. The application renders
 that exact brief once and initializes a plain-dictionary `ResearchState`. A stateless
@@ -91,29 +92,31 @@ three sources. The application merges only completed Worker results into state. 
 
 Each delegated Worker crosses one explicit application-owned run boundary. A frozen
 `AgentRunRequest` contains its Worker number, rendered approved brief, validated task, bounded
-model source, and model name. A
+LLM provider, and model name. A
 mutable `AgentRunState` privately retains the ordered Responses items, model-turn and custom-tool
-usage, an active source registry, source-read usage, current status, termination reason, final
-notes, and concise error while the Worker runs.
+usage, an active source registry, successfully read source IDs, source-read usage, current context
+session, latest validated summary, peak token accounting, current status, termination reason,
+final notes, and concise error while the Worker runs.
 A frozen `AgentRunResult` copies task and model identity, terminal status, bounded termination
-reason, notes or error, and used-versus-limit turn, tool, and read accounting. Standard-library
-dataclasses and `StrEnum` represent this boundary because it is application state rather than
-model-generated Structured Output.
+reason, notes or error, and used-versus-limit turn, tool, read, session, summary, and context-token
+accounting. Standard-library dataclasses and `StrEnum` represent this boundary because it is
+application state rather than model-generated Structured Output.
 
 Terminal statuses are `completed`, `failed`, and `cancelled`. Bounded termination reasons are
 `completed`, `tool_limit`, `turn_limit`, `context_limit`, `refusal`, `model_error`, `tool_error`,
-and `cancelled`. A successful forced final-notes turn after all five tool attempts returns
-`completed`/`tool_limit`; using all six model attempts without valid notes returns
-`failed`/`turn_limit`. `context_limit` is reserved for the later application-owned context budget;
-the current hosted path classifies Responses request failures as `model_error` without parsing
-exception messages. Every expected Worker outcome prints one result summary. Only completed
-results enter `ResearchState`; failed or cancelled results remain fail-fast and stop before
-another Supervisor or report request.
+and `cancelled`. A successful forced final-notes turn after all ten tool attempts returns
+`completed`/`tool_limit`; using all 15 model attempts without valid notes returns
+`failed`/`turn_limit`. `context_limit` now represents the application-owned 20,000-token
+pre-summary projection limit or three-session limit. Provider context-window errors remain
+`model_error` because the application does not parse exception text. Every expected Worker outcome
+prints one result summary. Only completed results enter `ResearchState`; failed or cancelled
+results remain fail-fast and stop before another Supervisor or report request.
 
 Every request remains stateless and uses `store=False`. The thin `llm_call` provider
 primitive supports mutually exclusive custom tools or a Pydantic text format, accepts an
-optional tool choice and output-token limit, and returns the official SDK `Response` without
-wrapping it. Supervisor requests use a 4,000-token output limit. Worker requests omit an
+optional tool choice, parallel-tool setting, and output-token limit, and returns the official SDK
+`Response` without wrapping it. Supervisor requests use a 4,000-token output limit. Ordinary
+Worker requests omit an
 application-set output limit because Responses API output limits include both reasoning tokens
 and visible output, and real 4,000- and 8,000-token runs both ended before returning final notes.
 Required non-Worker free-text extraction reports incomplete responses and refusals before
@@ -128,32 +131,46 @@ workflow visible. `run_scope_workflow` owns bounded intake and approval;
 merging; `run_research_worker` owns one visible Worker lifecycle;
 `run_research_worker_loop` owns one mutable run state, its custom tool loop, and result
 finalization; and `run_report_workflow` owns the explicit Write-Critic-Revise sequence. `main`
-owns the CLI harness, backend selection, client construction, top-level error handling, and final
-report output. The hosted client and optional local client use `max_retries=0` so transient API
-failures remain visible at the first application-owned failure boundary instead of creating
-hidden provider retries. The OpenAI Worker path reuses the hosted client; the local path constructs
-one isolated client and never substitutes either path's API key.
+owns the CLI harness, provider selection, single-client construction, top-level error handling,
+and final report output. The selected client uses `max_retries=0` so transient API failures remain
+visible at the first application-owned failure boundary instead of creating hidden provider
+retries. Only the selected provider's API key and model name are required for routing.
 `agent_instructions.py` owns the plain instruction and model-input constants for every
 model-facing stage. `agent_tools.py` owns the tool schemas, functions, and dispatch.
+
+Every ordinary Worker response must provide consistent integer token usage. For zero, one, or
+multiple returned function calls, the application executes budget-permitted calls synchronously
+in response order and links every result. It projects the next input from exact input and output
+usage plus the UTF-8 byte length and a fixed 256-token allowance for each linked function output.
+A projection at or above 12,000 tokens enters the explicit context boundary; a projection above
+20,000 stops before summary. Otherwise the complete active-session history is replayed unchanged.
+
+At a permitted boundary, the same selected model spends one of the 15 run-level turns on an
+8,000-token-bounded `ResearchStateSummary` Structured Output. The application validates its source
+IDs against the run registry and prevents `selected_source` claims for IDs without a successful
+read. It renders URLs from the registry, discards the old history, and starts the next of at most
+three sessions from only the task, approved brief, remaining budgets, and validated summary. Tool,
+read, source, turn, and context counters remain run-level.
 
 Search results with eligible primary HTTP(S) URLs receive application-issued `S1`, `S2`, ...
 identifiers scoped to one Worker. The application rejects credential-bearing, local-name,
 non-global IP-literal, malformed, explicit PDF, and non-HTTP(S) destinations before registration.
 `read_source_tool` accepts only one issued ID and a focused query; the application resolves the
-URL and Tavily Extract returns bounded relevant Markdown content. Each read consumes one of two
-read attempts and one of the existing five total tool attempts. The registry and extracted
-content disappear with Worker history, while the immutable result retains only used-versus-limit
-read accounting.
+URL and Tavily Extract returns bounded relevant Markdown content. Each read consumes one of four
+read attempts and one of the ten total tool attempts. The source registry and successfully read
+source-ID set survive context replacement, while raw extracted content survives only when selected
+into the bounded summary. The immutable result retains accounting rather than source content.
 
 ### Manual history retained from release 0.3.0
 
 The explicit `run_research_worker_loop` invokes `llm_call` repeatedly and maintains one ordered
-`input_items` list in application memory:
+active-session `input_items` list in application memory:
 
 1. start with the user input;
 2. append every item from each `openai_response.output` in its original order;
 3. append application-owned `function_call_output` items; and
-4. send the complete list as the next Responses API `input`.
+4. send the complete list as the next Responses API `input`; and
+5. after a validated context summary, replace the complete list with one resumed-state user item.
 
 The project does not use `previous_response_id` or the Conversations API.
 
@@ -162,10 +179,9 @@ history. The application preserves provider-owned fields such as opaque encrypte
 or phase metadata when returned, replays those items without interpreting them, and does
 not present them as private chain-of-thought.
 
-The hosted and local Workers never share a history. The selected local Qwen profiles return
-parser-produced reasoning text rather than encrypted reasoning. Any incompatible local
-output or replay request fails at the existing `model_error` boundary without translation or
-fallback.
+OpenAI and DeepSeek execute in separate runs and never share a client or history. Any incompatible
+DeepSeek output or replay request fails at the existing `model_error` boundary without translation
+or fallback.
 
 The official OpenAI documentation states that manually managed history should preserve
 prior user inputs and every response output item. Recheck the
@@ -197,9 +213,9 @@ to 6,000 characters.
 
 Each search returns at most three results. Tavily content and arXiv summaries are truncated
 to 2,000 characters per result before they enter manually replayed Worker history. Each Worker
-has at most six model turns, five total tool execution attempts, and two selected-source read
-attempts. These deterministic boundaries keep the explicit history loop observable without
-adding a compression stage.
+has at most 15 model turns, ten total tool execution attempts, four selected-source read attempts,
+three context sessions, and two context summaries. These deterministic boundaries keep explicit
+history replay and replacement observable.
 
 All three JSON tool definitions and implementations live in `agent_tools.py` so
 `deep_research.py` shows the Agent loop without network-client details.
@@ -226,8 +242,10 @@ Supervisor decisions, isolated Worker boundaries, central result merging, and th
 Research stop reason. Release 0.7.0 adds one result summary for every started Worker; release
 0.8.0 adds selected-source registration and read progress plus read usage to that summary.
 Release 0.9.0 prints the selected Worker model source and name once before Scope and in every
-Worker result. Local input validation may repeat the current prompt, but it cannot create another
-model clarification round or brief revision.
+Worker result. Release 0.10.0 renames that identity to LLM provider and applies it to the complete
+workflow. It also prints session starts, required projection boundaries, validated summary blocks,
+and context accounting in each result. Terminal input validation may repeat the current prompt,
+but it cannot create another model clarification round or brief revision.
 
 The first release uses plain terminal text and the standard library. `python-dotenv` is
 limited to loading local `.env` configuration. A terminal rendering dependency may be
@@ -254,7 +272,9 @@ Worker-result dictionary with an immutable `AgentRunResult` and also prints fail
 results before the existing fatal boundary. Release 0.8.0 keeps the source registry and selected
 content only in the active Worker's memory. Release 0.9.0 adds model source and model name to the
 request and result while keeping clients, endpoints, credentials, and output histories in memory.
-It adds no output file or run directory.
+Release 0.10.0 renames model source to LLM provider and prints the global provider and model before
+Scope. It keeps only the latest validated summary in mutable state, does not retain replaced
+histories, and adds no output file or run directory.
 
 Later releases may add artifacts only when their specifications require them. Historical
 generated artifacts remain local and ignored by Git.
@@ -268,38 +288,42 @@ diagnostics, or committed.
 
 Current variables:
 
-- `OPENAI_API_KEY`
-- `MODEL_NAME`
+- `LLM_PROVIDER` (required; accepts exactly `openai` or `deepseek`)
+- `OPENAI_API_KEY` (required only for `openai`)
+- `OPENAI_MODEL_NAME` (required only for `openai`)
+- `DEEPSEEK_API_KEY` (required only for `deepseek`)
+- `DEEPSEEK_MODEL_NAME` (required only for `deepseek`)
 - `TAVILY_API_KEY`
-- `WORKER_BACKEND` (optional, `openai` by default)
-- `LOCAL_WORKER_BASE_URL` (required only for `local`)
-- `LOCAL_WORKER_API_KEY` (required only for `local`)
-- `LOCAL_WORKER_MODEL_NAME` (required only for `local`)
 
 ## Data Representation
 
 Use plain dictionaries and lists for Responses API history and tool results while they remain
 easy to understand. Release 0.7.0 introduces named standard-library dataclasses only for the
-explicit Worker request, mutable run state, and terminal result that later local inference,
+explicit Worker request, mutable run state, and terminal result that later hosted-model comparisons,
 context sessions, and rollout consumers must share. Release 0.8.0 extends the mutable state with
 one plain source dictionary and read counter and extends the result only with read usage and its
 limit; it adds no source class or retrieval abstraction. Release 0.9.0 adds one bounded model
 source enum and adds the selected source and model name to the existing request and result. It
 does not store a client or endpoint in Agent state or introduce a model configuration class.
+Release 0.10.0 renames that enum to `LLMProvider` and its request/result field to `llm_provider`,
+matching the now-global routing decision. It extends the existing state and result dataclasses
+with context counters and peak token values rather than introducing a context-manager class.
 
 Pydantic 2 validates only model-generated application boundaries:
 `ClarificationAssessment`, `ResearchBrief`, `SupervisorDecision`, and nested
-`ResearchTask`. Bounded list sizes, required non-empty strings, and forbidden extra fields
-are runtime invariants. Clarification answers, approval state, Responses API histories, and
-`ResearchState` remain plain strings, lists, and dictionaries. The current `ResearchState` keys
-are `approved_brief`, `worker_results`, and `stop_reason`; `worker_results` is an ordered list of
-completed `AgentRunResult` values.
+`ResearchTask`, plus the v0.10.0 `ResearchStateSummary` and nested `SummarySource`. Application
+checks add source-ID uniqueness, registry membership, and non-inflated evidence levels after
+Pydantic validation. Clarification answers, approval state, Responses API histories, and
+Supervisor `ResearchState` remain plain strings, lists, and dictionaries. The current Supervisor
+state keys are `approved_brief`, `worker_results`, and `stop_reason`; `worker_results` is an ordered
+list of completed `AgentRunResult` values.
 
 ## Quality Checks
 
-Release 0.9.0 uses Python compilation, CLI startup, and the manual acceptance scenarios in
-its specification. Ruff, mypy, and an automated test suite remain intentionally omitted
-while the learning runtime is kept minimal.
+Release 0.10.0 requires Python compilation, CLI startup, configuration-matrix checks, controlled
+client state-machine checks, and real OpenAI and DeepSeek protocol scenarios defined in its
+specification. Ruff, mypy, and a general automated test suite remain intentionally omitted while
+the learning runtime is kept minimal.
 
 ## Dependency Policy
 
@@ -311,7 +335,4 @@ A dependency is acceptable only when:
 4. its purpose is recorded in this document.
 
 The project currently depends on the OpenAI SDK, Pydantic 2, `python-dotenv`,
-`tavily-python`, and `requests` at runtime.
-
-vLLM, model weights, parsers, accelerator runtimes, and their dependencies belong to the
-operator-managed local server and are not project dependencies.
+`tavily-python`, and `requests` at runtime. DeepSeek uses the existing SDK and adds no dependency.

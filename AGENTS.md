@@ -45,9 +45,12 @@ tracing is deferred until a release specification explicitly introduces it.
 - Do not support mid-run user interaction until a scoping release explicitly introduces
   bounded clarification and a ResearchBrief approval point.
 - Use the Responses API interaction model for model calls. Releases through 0.8.0 use
-  OpenAI-hosted models. Release 0.9.0 may introduce a local open-weight Research Worker
-  through a vLLM Responses-compatible endpoint when its active specification defines the
-  compatibility contract. Do not add another provider API or a provider-neutral gateway.
+  OpenAI-hosted models. Release 0.9.0 introduced a local open-weight Research Worker;
+  release 0.10.0 retires that runtime path and selects either OpenAI or hosted DeepSeek
+  once per run for every LLM call, only when its active specification defines the exact
+  Responses API compatibility contract. Read the selected provider's API key and model
+  name from the environment. Do not add per-stage routing, automatic provider fallback,
+  a Chat Completions path, another model API, or a provider-neutral gateway.
 - Implement a custom function-tool loop before adopting hosted tool orchestration so that
   the agent harness remains visible.
 - Introduce paper search and web search incrementally through release specifications.

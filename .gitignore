@@ -3,8 +3,6 @@ __pycache__/
 .DS_Store
 .env
 .venv/
-.vllm-venv/
-.vllm-metal-venv/
 venv/
 .vscode/
 .mypy_cache/

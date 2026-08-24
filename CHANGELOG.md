@@ -6,6 +6,29 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- Added run-level `LLM_PROVIDER` selection between OpenAI and the official hosted DeepSeek
+  Responses-compatible endpoint.
+- Added provider-specific API-key and model-name environment configuration.
+- Added the in-progress v0.10.0 long-horizon context-session specification.
+- Added bounded `ResearchStateSummary` Structured Outputs with application validation for source
+  identity and selected-source evidence levels.
+- Added visible context sessions, deterministic projection boundaries, summary replacement, and
+  context accounting to every Agent run result.
+
+### Changed
+
+- Removed local vLLM Worker configuration and client routing from the current runtime.
+- Changed every LLM stage to use the one provider and model selected for the run.
+- Expanded each Worker to 15 model turns, 10 tool attempts, four selected-source reads, three
+  context sessions, and two context summaries.
+- Requested non-parallel Worker tool calls while accepting provider-returned call batches,
+  executing budget-permitted calls synchronously in response order, and projecting every linked
+  output.
+- Updated the project version, lock metadata, and arXiv `User-Agent` to 0.10.0 without adding a
+  dependency.
+
 ## [0.9.0] - 2026-08-23
 
 ### Added

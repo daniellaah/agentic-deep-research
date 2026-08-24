@@ -7,7 +7,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Annotated
+from typing import Annotated, Literal
 from urllib.parse import unquote, urlsplit
 
 from dotenv import load_dotenv
@@ -21,7 +21,10 @@ from agent_instructions import (
     CRITIC_INSTRUCTIONS,
     RESEARCH_BUDGET_EXHAUSTED_INPUT,
     RESEARCH_INSTRUCTIONS,
+    RESEARCH_SUMMARY_INSTRUCTIONS,
+    RESEARCH_SUMMARY_REQUEST_INPUT,
     REVISE_INSTRUCTIONS,
+    RESUMED_RESEARCH_STATE_NOTICE,
     SUPERVISOR_INSTRUCTIONS,
     WRITE_INSTRUCTIONS,
 )
@@ -32,13 +35,20 @@ from agent_tools import (
     execute_research_tool,
 )
 
-MAX_WORKER_TURNS = 6
-MAX_WORKER_TOOL_CALLS = 5
-MAX_WORKER_SOURCE_READS = 2
+MAX_WORKER_TURNS = 15
+MAX_WORKER_TOOL_CALLS = 10
+MAX_WORKER_SOURCE_READS = 4
 MAX_RESEARCH_WORKERS = 4
 MAX_SUPERVISOR_OUTPUT_TOKENS = 4000
-MAX_LOCAL_INPUT_CHARACTERS = 2000
+MAX_CONTEXT_SESSIONS = 3
+MAX_CONTEXT_SUMMARIES = 2
+CONTEXT_TRIGGER_TOKENS = 12000
+CONTEXT_HARD_LIMIT_TOKENS = 20000
+MAX_SUMMARY_OUTPUT_TOKENS = 8000
+FUNCTION_OUTPUT_PROJECTION_OVERHEAD_TOKENS = 256
+MAX_USER_INPUT_CHARACTERS = 2000
 MAX_AGENT_ERROR_CHARACTERS = 300
+DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 OUTPUT_WIDTH = 80
 SEARCH_TOOL_NAMES = {"tavily_search_tool", "arxiv_search_tool"}
 READ_SOURCE_TOOL_NAME = "read_source_tool"
@@ -62,6 +72,30 @@ EvidenceTarget = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1, max_length=200),
 ]
+SummaryCompletedWork = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=500),
+]
+SummarySourceId = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=20),
+]
+SummaryKeyEvidence = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=600),
+]
+SummaryLimitation = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=300),
+]
+SummaryUnresolvedQuestion = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=400),
+]
+SummaryNextAction = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1, max_length=300),
+]
 
 
 class AgentRunStatus(StrEnum):
@@ -82,13 +116,13 @@ class AgentTerminationReason(StrEnum):
     CANCELLED = "cancelled"
 
 
-class AgentModelSource(StrEnum):
+class LLMProvider(StrEnum):
     OPENAI = "openai"
-    LOCAL = "local"
+    DEEPSEEK = "deepseek"
 
 
 class RunCancelled(Exception):
-    """Stop a run after application cancellation or local input ends."""
+    """Stop a run after application cancellation or terminal input ends."""
 
 
 class ClarificationAssessment(BaseModel):
@@ -148,12 +182,39 @@ class SupervisorDecision(BaseModel):
     ]
 
 
+class SummarySource(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    source_id: SummarySourceId
+    evidence_level: Literal["discovery_snippet", "selected_source"]
+    key_evidence: SummaryKeyEvidence
+    limitations: SummaryLimitation
+
+
+class ResearchStateSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    completed_work: Annotated[
+        list[SummaryCompletedWork],
+        Field(min_length=1, max_length=8),
+    ]
+    visited_sources: Annotated[list[SummarySource], Field(max_length=8)]
+    unresolved_questions: Annotated[
+        list[SummaryUnresolvedQuestion],
+        Field(max_length=6),
+    ]
+    next_actions: Annotated[
+        list[SummaryNextAction],
+        Field(min_length=1, max_length=4),
+    ]
+
+
 @dataclass(frozen=True)
 class AgentRunRequest:
     worker_number: int
     approved_brief: str
     task: ResearchTask
-    model_source: AgentModelSource
+    llm_provider: LLMProvider
     model_name: str
 
 
@@ -165,6 +226,12 @@ class AgentRunState:
     tool_calls_used: int = 0
     source_urls: dict[str, str] = field(default_factory=dict)
     source_reads_used: int = 0
+    read_source_ids: set[str] = field(default_factory=set)
+    context_session_number: int = 1
+    context_summaries_used: int = 0
+    latest_summary: ResearchStateSummary | None = None
+    peak_input_tokens: int = 0
+    peak_projected_input_tokens: int = 0
     status: AgentRunStatus = AgentRunStatus.RUNNING
     termination_reason: AgentTerminationReason | None = None
     notes: str | None = None
@@ -175,7 +242,7 @@ class AgentRunState:
 class AgentRunResult:
     worker_number: int
     task: ResearchTask
-    model_source: AgentModelSource
+    llm_provider: LLMProvider
     model_name: str
     status: AgentRunStatus
     termination_reason: AgentTerminationReason
@@ -187,6 +254,14 @@ class AgentRunResult:
     tool_call_limit: int
     source_reads_used: int
     source_read_limit: int
+    context_sessions_used: int
+    context_session_limit: int
+    context_summaries_used: int
+    context_summary_limit: int
+    peak_input_tokens: int
+    peak_projected_input_tokens: int
+    context_trigger_tokens: int
+    context_hard_limit_tokens: int
 
 
 def print_progress(label, subject, status, detail=None, indent=0):
@@ -207,7 +282,7 @@ def print_error(message):
     print(f"[ERROR] {message}", file=sys.stderr)
 
 
-def read_local_input(prompt, *, choices=None, max_length=None):
+def read_terminal_input(prompt, *, choices=None, max_length=None):
     while True:
         try:
             value = input(prompt).strip()
@@ -444,6 +519,55 @@ def get_refusal_text(response):
     return None
 
 
+def validate_response_usage(response):
+    usage = getattr(response, "usage", None)
+    values = {
+        "input_tokens": getattr(usage, "input_tokens", None),
+        "output_tokens": getattr(usage, "output_tokens", None),
+        "total_tokens": getattr(usage, "total_tokens", None),
+    }
+    for name, value in values.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Response usage {name} must be a non-negative integer.")
+    if values["total_tokens"] != (
+        values["input_tokens"] + values["output_tokens"]
+    ):
+        raise ValueError("Response usage token totals are inconsistent.")
+    return values["input_tokens"], values["output_tokens"]
+
+
+def project_next_research_input(
+    input_tokens,
+    output_tokens,
+    function_call_outputs=None,
+):
+    for name, value in {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Projection {name} must be a non-negative integer.")
+
+    projected_tokens = input_tokens + output_tokens
+    if function_call_outputs is None:
+        function_call_outputs = []
+    if not isinstance(function_call_outputs, list):
+        raise TypeError("Projection function_call_outputs must be a list.")
+    for function_call_output in function_call_outputs:
+        if not isinstance(function_call_output, dict):
+            raise TypeError(
+                "Each projected function_call_output must be an object."
+            )
+        compact_output = json.dumps(
+            function_call_output,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        projected_tokens += len(compact_output.encode("utf-8"))
+        projected_tokens += FUNCTION_OUTPUT_PROJECTION_OVERHEAD_TOKENS
+    return projected_tokens
+
+
 def llm_call(
     client,
     model_name,
@@ -452,14 +576,21 @@ def llm_call(
     tools=None,
     text_format=None,
     tool_choice=None,
+    parallel_tool_calls=None,
     max_output_tokens=None,
 ):
-    if text_format is not None and (tools is not None or tool_choice is not None):
+    if text_format is not None and (
+        tools is not None
+        or tool_choice is not None
+        or parallel_tool_calls is not None
+    ):
         raise ValueError(
-            "tools, tool_choice, and text_format cannot be used together."
+            "Tool configuration and text_format cannot be used together."
         )
     if tool_choice is not None and tools is None:
         raise ValueError("tool_choice requires tools.")
+    if parallel_tool_calls is not None and tools is None:
+        raise ValueError("parallel_tool_calls requires tools.")
 
     request = {
         "model": model_name,
@@ -479,11 +610,11 @@ def llm_call(
     if tools is None:
         return client.responses.create(**request)
 
-    return client.responses.create(
-        tools=tools,
-        tool_choice=tool_choice or "auto",
-        **request,
-    )
+    request["tools"] = tools
+    request["tool_choice"] = tool_choice or "auto"
+    if parallel_tool_calls is not None:
+        request["parallel_tool_calls"] = parallel_tool_calls
+    return client.responses.create(**request)
 
 
 def require_output_text(response, stage):
@@ -547,9 +678,9 @@ def collect_clarification_answers(assessment):
     question_count = len(assessment.questions)
     for number in range(1, question_count + 1):
         answers.append(
-            read_local_input(
+            read_terminal_input(
                 f"Answer {number}/{question_count}: ",
-                max_length=MAX_LOCAL_INPUT_CHARACTERS,
+                max_length=MAX_USER_INPUT_CHARACTERS,
             )
         )
     return answers
@@ -700,7 +831,7 @@ def run_scope_workflow(client, model_name, question):
         format_research_brief(brief),
     )
 
-    action = read_local_input(
+    action = read_terminal_input(
         "Action [approve/revise/cancel]: ",
         choices=("approve", "revise", "cancel"),
     )
@@ -709,9 +840,9 @@ def run_scope_workflow(client, model_name, question):
     if action == "approve":
         return brief
 
-    revision_request = read_local_input(
+    revision_request = read_terminal_input(
         "Revision request: ",
-        max_length=MAX_LOCAL_INPUT_CHARACTERS,
+        max_length=MAX_USER_INPUT_CHARACTERS,
     )
     print_progress("Scope", "Research brief revision", "started", indent=1)
     revised_brief = request_revised_research_brief(
@@ -729,7 +860,7 @@ def run_scope_workflow(client, model_name, question):
         format_research_brief(revised_brief),
     )
 
-    final_action = read_local_input(
+    final_action = read_terminal_input(
         "Action [approve/cancel]: ",
         choices=("approve", "cancel"),
     )
@@ -763,6 +894,92 @@ def build_worker_input(request):
 """.strip()
 
 
+def validate_research_state_summary(summary, state):
+    if not isinstance(summary, ResearchStateSummary):
+        raise TypeError("Context summary returned no validated structured output.")
+
+    source_ids = [source.source_id for source in summary.visited_sources]
+    if len(source_ids) != len(set(source_ids)):
+        raise ValueError("Context summary contains duplicate source IDs.")
+    for source in summary.visited_sources:
+        if source.source_id not in state.source_urls:
+            raise ValueError("Context summary contains an unknown source ID.")
+        if (
+            source.evidence_level == "selected_source"
+            and source.source_id not in state.read_source_ids
+        ):
+            raise ValueError(
+                "Context summary overstates selected-source evidence."
+            )
+    return summary
+
+
+def render_research_state_summary(summary, state):
+    validate_research_state_summary(summary, state)
+    sections = [
+        "## Completed work",
+        "",
+        *(f"- {item}" for item in summary.completed_work),
+        "",
+        "## Visited sources",
+        "",
+    ]
+    if not summary.visited_sources:
+        sections.append("None.")
+    for source in summary.visited_sources:
+        sections.extend(
+            [
+                f"### {source.source_id} — {source.evidence_level}",
+                "",
+                f"URL: {state.source_urls[source.source_id]}",
+                "",
+                f"Key evidence: {source.key_evidence}",
+                "",
+                f"Limitations: {source.limitations}",
+                "",
+            ]
+        )
+    sections.extend(["## Unresolved questions", ""])
+    if summary.unresolved_questions:
+        sections.extend(f"- {item}" for item in summary.unresolved_questions)
+    else:
+        sections.append("None.")
+    sections.extend(
+        [
+            "",
+            "## Next actions",
+            "",
+            *(f"- {item}" for item in summary.next_actions),
+        ]
+    )
+    return "\n".join(sections).strip()
+
+
+def build_resumed_worker_input(state, summary):
+    rendered_summary = render_research_state_summary(summary, state)
+    return f"""
+{build_worker_input(state.request)}
+
+## Context session
+
+Session: {state.context_session_number}/{MAX_CONTEXT_SESSIONS}
+
+## Remaining run budgets
+
+Model turns: {MAX_WORKER_TURNS - state.model_turns_used}
+Tool calls: {MAX_WORKER_TOOL_CALLS - state.tool_calls_used}
+Selected-source reads: {MAX_WORKER_SOURCE_READS - state.source_reads_used}
+Context sessions: {MAX_CONTEXT_SESSIONS - state.context_session_number}
+Context summaries: {MAX_CONTEXT_SUMMARIES - state.context_summaries_used}
+
+## Application-validated research state
+
+{RESUMED_RESEARCH_STATE_NOTICE}
+
+{rendered_summary}
+""".strip()
+
+
 def initialize_agent_run_state(request):
     if (
         isinstance(request.worker_number, bool)
@@ -774,8 +991,8 @@ def initialize_agent_run_state(request):
         raise ValueError("Agent run approved_brief must be a non-empty string.")
     if not isinstance(request.task, ResearchTask):
         raise TypeError("Agent run task must be a validated ResearchTask.")
-    if not isinstance(request.model_source, AgentModelSource):
-        raise TypeError("Agent run model_source must be a valid AgentModelSource.")
+    if not isinstance(request.llm_provider, LLMProvider):
+        raise TypeError("Agent run llm_provider must be a valid LLMProvider.")
     if not isinstance(request.model_name, str) or not request.model_name.strip():
         raise ValueError("Agent run model_name must be a non-empty string.")
     if request.model_name != request.model_name.strip():
@@ -816,6 +1033,24 @@ def finalize_agent_run(
         raise ValueError("Agent run source-read usage is outside its limit.")
     if state.source_reads_used > state.tool_calls_used:
         raise ValueError("Agent run source-read usage exceeds tool-call usage.")
+    if not 1 <= state.context_session_number <= MAX_CONTEXT_SESSIONS:
+        raise ValueError("Agent run context-session usage is outside its limit.")
+    if not 0 <= state.context_summaries_used <= MAX_CONTEXT_SUMMARIES:
+        raise ValueError("Agent run context-summary usage is outside its limit.")
+    if state.context_session_number != state.context_summaries_used + 1:
+        raise ValueError("Agent run context session and summary counts disagree.")
+    if not isinstance(state.read_source_ids, set):
+        raise TypeError("Agent run read-source IDs must be a set.")
+    if not state.read_source_ids.issubset(state.source_urls):
+        raise ValueError("Agent run read-source IDs are outside its source registry.")
+    if len(state.read_source_ids) > state.source_reads_used:
+        raise ValueError("Agent run read-source IDs exceed successful read attempts.")
+    for name, value in {
+        "peak input tokens": state.peak_input_tokens,
+        "peak projected input tokens": state.peak_projected_input_tokens,
+    }.items():
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(f"Agent run {name} must be a non-negative integer.")
     if not isinstance(status, AgentRunStatus) or status == AgentRunStatus.RUNNING:
         raise ValueError("Agent run result requires a terminal status.")
     if not isinstance(termination_reason, AgentTerminationReason):
@@ -839,6 +1074,14 @@ def finalize_agent_run(
     }
     if termination_reason not in allowed_reasons[status]:
         raise ValueError("Agent run status and termination reason are inconsistent.")
+    if (
+        state.peak_projected_input_tokens > CONTEXT_HARD_LIMIT_TOKENS
+        and not (
+            status == AgentRunStatus.FAILED
+            and termination_reason == AgentTerminationReason.CONTEXT_LIMIT
+        )
+    ):
+        raise ValueError("Agent run exceeded its context hard limit without stopping.")
 
     if status == AgentRunStatus.COMPLETED:
         if not isinstance(notes, str) or not notes.strip():
@@ -865,7 +1108,7 @@ def finalize_agent_run(
     return AgentRunResult(
         worker_number=state.request.worker_number,
         task=state.request.task,
-        model_source=state.request.model_source,
+        llm_provider=state.request.llm_provider,
         model_name=state.request.model_name,
         status=state.status,
         termination_reason=state.termination_reason,
@@ -877,18 +1120,40 @@ def finalize_agent_run(
         tool_call_limit=MAX_WORKER_TOOL_CALLS,
         source_reads_used=state.source_reads_used,
         source_read_limit=MAX_WORKER_SOURCE_READS,
+        context_sessions_used=state.context_session_number,
+        context_session_limit=MAX_CONTEXT_SESSIONS,
+        context_summaries_used=state.context_summaries_used,
+        context_summary_limit=MAX_CONTEXT_SUMMARIES,
+        peak_input_tokens=state.peak_input_tokens,
+        peak_projected_input_tokens=state.peak_projected_input_tokens,
+        context_trigger_tokens=CONTEXT_TRIGGER_TOKENS,
+        context_hard_limit_tokens=CONTEXT_HARD_LIMIT_TOKENS,
     )
 
 
 def print_agent_run_result(result):
     lines = [
-        f"Model source: {result.model_source.value}",
+        f"LLM provider: {result.llm_provider.value}",
         f"Model: {result.model_name}",
         f"Status: {result.status.value}",
         f"Termination reason: {result.termination_reason.value}",
         f"Model turns: {result.model_turns_used}/{result.model_turn_limit}",
         f"Tool calls: {result.tool_calls_used}/{result.tool_call_limit}",
         f"Source reads: {result.source_reads_used}/{result.source_read_limit}",
+        (
+            "Context sessions: "
+            f"{result.context_sessions_used}/{result.context_session_limit}"
+        ),
+        (
+            "Context summaries: "
+            f"{result.context_summaries_used}/{result.context_summary_limit}"
+        ),
+        f"Peak observed input tokens: {result.peak_input_tokens}",
+        (
+            "Peak projected input tokens: "
+            f"{result.peak_projected_input_tokens}/"
+            f"{result.context_hard_limit_tokens}"
+        ),
     ]
     if result.error_message is not None:
         lines.append(f"Error: {result.error_message}")
@@ -1016,6 +1281,7 @@ def execute_worker_tool_call(tool_request, state, tavily_api_key):
                 source_url,
                 tool_result,
             )
+            state.read_source_ids.add(source_id)
             content_characters = tool_result[0]["content_characters"]
             reads_remaining = MAX_WORKER_SOURCE_READS - state.source_reads_used
             read_noun = "read" if reads_remaining == 1 else "reads"
@@ -1064,12 +1330,202 @@ def execute_worker_tool_call(tool_request, state, tavily_api_key):
     }
 
 
+def finalize_context_summary_failure(
+    state,
+    summary_number,
+    status,
+    termination_reason,
+    error_message,
+):
+    print_progress(
+        f"Summary {summary_number}/{MAX_CONTEXT_SUMMARIES}",
+        "Research state",
+        "cancelled" if status == AgentRunStatus.CANCELLED else "failed",
+        indent=2,
+    )
+    return finalize_agent_run(
+        state,
+        status,
+        termination_reason,
+        error_message=error_message,
+    )
+
+
+def run_context_boundary(client, state, projected_input_tokens):
+    current_session = state.context_session_number
+    print_progress(
+        f"Context {current_session}/{MAX_CONTEXT_SESSIONS}",
+        "Boundary",
+        "required",
+        (
+            f"projected {projected_input_tokens:,} tokens; "
+            f"trigger {CONTEXT_TRIGGER_TOKENS:,}"
+        ),
+        indent=2,
+    )
+
+    if projected_input_tokens > CONTEXT_HARD_LIMIT_TOKENS:
+        return finalize_agent_run(
+            state,
+            AgentRunStatus.FAILED,
+            AgentTerminationReason.CONTEXT_LIMIT,
+            error_message=(
+                "Projected next research input exceeds the pre-summary "
+                f"session hard limit of {CONTEXT_HARD_LIMIT_TOKENS} tokens."
+            ),
+        )
+    if current_session >= MAX_CONTEXT_SESSIONS:
+        return finalize_agent_run(
+            state,
+            AgentRunStatus.FAILED,
+            AgentTerminationReason.CONTEXT_LIMIT,
+            error_message="Research Worker reached its context-session limit.",
+        )
+    if MAX_WORKER_TURNS - state.model_turns_used < 2:
+        return finalize_agent_run(
+            state,
+            AgentRunStatus.FAILED,
+            AgentTerminationReason.TURN_LIMIT,
+            error_message=(
+                "Research Worker lacks one summary turn and one resumed "
+                "research turn."
+            ),
+        )
+
+    summary_number = state.context_summaries_used + 1
+    print_progress(
+        f"Summary {summary_number}/{MAX_CONTEXT_SUMMARIES}",
+        "Research state",
+        "started",
+        indent=2,
+    )
+    summary_input = [
+        *state.input_items,
+        {
+            "role": "user",
+            "content": RESEARCH_SUMMARY_REQUEST_INPUT,
+        },
+    ]
+    state.model_turns_used += 1
+    try:
+        summary_response = llm_call(
+            client,
+            state.request.model_name,
+            RESEARCH_SUMMARY_INSTRUCTIONS,
+            summary_input,
+            text_format=ResearchStateSummary,
+            max_output_tokens=MAX_SUMMARY_OUTPUT_TOKENS,
+        )
+    except RunCancelled as error:
+        return finalize_context_summary_failure(
+            state,
+            summary_number,
+            AgentRunStatus.CANCELLED,
+            AgentTerminationReason.CANCELLED,
+            compact_agent_error(error),
+        )
+    except Exception as error:
+        return finalize_context_summary_failure(
+            state,
+            summary_number,
+            AgentRunStatus.FAILED,
+            AgentTerminationReason.MODEL_ERROR,
+            format_model_exception(error),
+        )
+
+    if getattr(summary_response, "status", None) == "cancelled":
+        return finalize_context_summary_failure(
+            state,
+            summary_number,
+            AgentRunStatus.CANCELLED,
+            AgentTerminationReason.CANCELLED,
+            "Context summary response was cancelled.",
+        )
+    refusal = get_refusal_text(summary_response)
+    if refusal is not None:
+        return finalize_context_summary_failure(
+            state,
+            summary_number,
+            AgentRunStatus.FAILED,
+            AgentTerminationReason.MODEL_ERROR,
+            compact_agent_error(f"Context summary was refused: {refusal}"),
+        )
+    if getattr(summary_response, "status", None) != "completed":
+        return finalize_context_summary_failure(
+            state,
+            summary_number,
+            AgentRunStatus.FAILED,
+            AgentTerminationReason.MODEL_ERROR,
+            format_response_failure(summary_response),
+        )
+
+    try:
+        summary_input_tokens, _ = validate_response_usage(summary_response)
+        state.peak_input_tokens = max(
+            state.peak_input_tokens,
+            summary_input_tokens,
+        )
+        summary = validate_research_state_summary(
+            getattr(summary_response, "output_parsed", None),
+            state,
+        )
+        rendered_summary = render_research_state_summary(summary, state)
+    except (TypeError, ValueError) as error:
+        return finalize_context_summary_failure(
+            state,
+            summary_number,
+            AgentRunStatus.FAILED,
+            AgentTerminationReason.MODEL_ERROR,
+            compact_agent_error(error),
+        )
+
+    print_block(
+        (
+            "RESEARCH STATE SUMMARY | "
+            f"WORKER {state.request.worker_number} | "
+            f"SESSION {current_session} -> {current_session + 1}"
+        ),
+        rendered_summary,
+    )
+    state.context_summaries_used += 1
+    state.context_session_number += 1
+    state.latest_summary = summary
+    state.input_items = [
+        {
+            "role": "user",
+            "content": build_resumed_worker_input(state, summary),
+        }
+    ]
+    print_progress(
+        f"Summary {summary_number}/{MAX_CONTEXT_SUMMARIES}",
+        "Research state",
+        "completed",
+        "validated",
+        indent=2,
+    )
+    print_progress(
+        f"Context {state.context_session_number}/{MAX_CONTEXT_SESSIONS}",
+        "Session",
+        "started",
+        "validated summary",
+        indent=2,
+    )
+    return None
+
+
 def run_research_worker_loop(
     client,
     request,
     tavily_api_key,
 ):
     state = initialize_agent_run_state(request)
+    print_progress(
+        f"Context {state.context_session_number}/{MAX_CONTEXT_SESSIONS}",
+        "Session",
+        "started",
+        "fresh task history",
+        indent=2,
+    )
 
     while state.model_turns_used < MAX_WORKER_TURNS:
         tool_budget_exhausted = (
@@ -1114,6 +1570,7 @@ def run_research_worker_loop(
                 model_input,
                 RESEARCH_TOOLS,
                 tool_choice="none" if tool_budget_exhausted else "auto",
+                parallel_tool_calls=False,
             )
         except RunCancelled as error:
             return finalize_agent_run(
@@ -1165,6 +1622,17 @@ def run_research_worker_loop(
                 AgentTerminationReason.MODEL_ERROR,
                 error_message="Research model response returned invalid output items.",
             )
+
+        try:
+            input_tokens, output_tokens = validate_response_usage(model_response)
+        except (TypeError, ValueError) as error:
+            return finalize_agent_run(
+                state,
+                AgentRunStatus.FAILED,
+                AgentTerminationReason.MODEL_ERROR,
+                error_message=compact_agent_error(error),
+            )
+        state.peak_input_tokens = max(state.peak_input_tokens, input_tokens)
         state.input_items.extend(output_items)
 
         tool_requests = [
@@ -1230,6 +1698,7 @@ def run_research_worker_loop(
                 notes=notes,
             )
 
+        tool_outputs = []
         for tool_request in tool_requests:
             if state.tool_calls_used == MAX_WORKER_TOOL_CALLS:
                 print_progress(
@@ -1238,43 +1707,51 @@ def run_research_worker_loop(
                     "skipped",
                     indent=2,
                 )
-                state.input_items.append(
-                    {
-                        "type": "function_call_output",
-                        "call_id": tool_request.call_id,
-                        "output": json.dumps(
-                            [{"error": "Tool call limit reached."}],
-                            ensure_ascii=False,
-                        ),
-                    }
-                )
-                continue
-
-            state.tool_calls_used += 1
-            try:
-                tool_output = execute_worker_tool_call(
-                    tool_request,
-                    state,
-                    tavily_api_key,
-                )
-            except RunCancelled as error:
-                return finalize_agent_run(
-                    state,
-                    AgentRunStatus.CANCELLED,
-                    AgentTerminationReason.CANCELLED,
-                    error_message=compact_agent_error(error),
-                )
-            except Exception as error:
-                return finalize_agent_run(
-                    state,
-                    AgentRunStatus.FAILED,
-                    AgentTerminationReason.TOOL_ERROR,
-                    error_message=compact_agent_error(
-                        "Research tool boundary failed "
-                        f"({type(error).__name__})."
+                tool_output = {
+                    "type": "function_call_output",
+                    "call_id": tool_request.call_id,
+                    "output": json.dumps(
+                        [{"error": "Tool call limit reached."}],
+                        ensure_ascii=False,
                     ),
-                )
+                }
+            else:
+                state.tool_calls_used += 1
+                try:
+                    tool_output = execute_worker_tool_call(
+                        tool_request,
+                        state,
+                        tavily_api_key,
+                    )
+                except RunCancelled as error:
+                    return finalize_agent_run(
+                        state,
+                        AgentRunStatus.CANCELLED,
+                        AgentTerminationReason.CANCELLED,
+                        error_message=compact_agent_error(error),
+                    )
+                except Exception as error:
+                    return finalize_agent_run(
+                        state,
+                        AgentRunStatus.FAILED,
+                        AgentTerminationReason.TOOL_ERROR,
+                        error_message=compact_agent_error(
+                            "Research tool boundary failed "
+                            f"({type(error).__name__})."
+                        ),
+                    )
             state.input_items.append(tool_output)
+            tool_outputs.append(tool_output)
+
+        projected_input_tokens = project_next_research_input(
+            input_tokens,
+            output_tokens,
+            tool_outputs,
+        )
+        state.peak_projected_input_tokens = max(
+            state.peak_projected_input_tokens,
+            projected_input_tokens,
+        )
 
         if state.tool_calls_used == MAX_WORKER_TOOL_CALLS:
             print_progress(
@@ -1284,6 +1761,15 @@ def run_research_worker_loop(
                 "next turn will produce final notes",
                 indent=2,
             )
+
+        if projected_input_tokens >= CONTEXT_TRIGGER_TOKENS:
+            boundary_result = run_context_boundary(
+                client,
+                state,
+                projected_input_tokens,
+            )
+            if boundary_result is not None:
+                return boundary_result
 
     return finalize_agent_run(
         state,
@@ -1298,7 +1784,7 @@ def run_research_worker_loop(
 
 def run_research_worker(
     client,
-    model_source,
+    llm_provider,
     model_name,
     research_brief,
     worker_number,
@@ -1309,7 +1795,7 @@ def run_research_worker(
         worker_number=worker_number,
         approved_brief=research_brief,
         task=task,
-        model_source=model_source,
+        llm_provider=llm_provider,
         model_name=model_name,
     )
     print_progress(
@@ -1344,10 +1830,8 @@ def run_research_worker(
 
 def run_research_supervisor_loop(
     client,
+    llm_provider,
     model_name,
-    worker_client,
-    worker_model_source,
-    worker_model_name,
     research_brief,
     tavily_api_key,
 ):
@@ -1385,9 +1869,9 @@ def run_research_supervisor_loop(
 
         task = decision.next_tasks[0]
         worker_result = run_research_worker(
-            worker_client,
-            worker_model_source,
-            worker_model_name,
+            client,
+            llm_provider,
+            model_name,
             research_brief,
             worker_number,
             task,
@@ -1476,18 +1960,16 @@ def run_report_workflow(client, model_name, brief_text, combined_notes):
 
 def run_deep_research(
     client,
+    llm_provider,
     model_name,
-    worker_client,
-    worker_model_source,
-    worker_model_name,
     question,
     tavily_api_key,
 ):
     print_progress(
-        "Worker model",
-        "Research policy",
+        "LLM",
+        "Provider and model",
         "configured",
-        f"{worker_model_source.value}, {worker_model_name}",
+        f"{llm_provider.value}, {model_name}",
     )
     print_progress("1/5", "Scope", "started")
     approved_brief = run_scope_workflow(client, model_name, question)
@@ -1497,10 +1979,8 @@ def run_deep_research(
     print_progress("2/5", "Research", "started")
     research_state = run_research_supervisor_loop(
         client,
+        llm_provider,
         model_name,
-        worker_client,
-        worker_model_source,
-        worker_model_name,
         brief_text,
         tavily_api_key,
     )
@@ -1537,16 +2017,13 @@ def main():
         return 2
 
     load_dotenv()
-    api_key = os.getenv("OPENAI_API_KEY", "").strip()
-    model_name = os.getenv("MODEL_NAME", "").strip()
+    llm_provider_value = os.getenv("LLM_PROVIDER", "").strip()
     tavily_api_key = os.getenv("TAVILY_API_KEY", "").strip()
-    worker_backend = os.getenv("WORKER_BACKEND", "").strip() or "openai"
 
     missing = [
         name
         for name, value in {
-            "OPENAI_API_KEY": api_key,
-            "MODEL_NAME": model_name,
+            "LLM_PROVIDER": llm_provider_value,
             "TAVILY_API_KEY": tavily_api_key,
         }.items()
         if not value
@@ -1558,46 +2035,45 @@ def main():
         return 2
 
     try:
-        worker_model_source = AgentModelSource(worker_backend)
+        llm_provider = LLMProvider(llm_provider_value)
     except ValueError:
-        print_error("WORKER_BACKEND must be one of: openai, local.")
+        print_error("LLM_PROVIDER must be one of: openai, deepseek.")
         return 2
 
-    local_worker_base_url = ""
-    local_worker_api_key = ""
-    local_worker_model_name = ""
-    if worker_model_source == AgentModelSource.LOCAL:
-        local_worker_base_url = os.getenv("LOCAL_WORKER_BASE_URL", "").strip()
-        local_worker_api_key = os.getenv("LOCAL_WORKER_API_KEY", "").strip()
-        local_worker_model_name = os.getenv("LOCAL_WORKER_MODEL_NAME", "").strip()
-        missing_local = [
-            name
-            for name, value in {
-                "LOCAL_WORKER_BASE_URL": local_worker_base_url,
-                "LOCAL_WORKER_API_KEY": local_worker_api_key,
-                "LOCAL_WORKER_MODEL_NAME": local_worker_model_name,
-            }.items()
-            if not value
-        ]
-        if missing_local:
-            print_error(
-                "Missing environment variable(s): "
-                f"{', '.join(missing_local)}."
-            )
-            return 2
+    if llm_provider == LLMProvider.OPENAI:
+        api_key_name = "OPENAI_API_KEY"
+        model_name_name = "OPENAI_MODEL_NAME"
+        base_url = None
+    else:
+        api_key_name = "DEEPSEEK_API_KEY"
+        model_name_name = "DEEPSEEK_MODEL_NAME"
+        base_url = DEEPSEEK_BASE_URL
+
+    api_key = os.getenv(api_key_name, "").strip()
+    model_name = os.getenv(model_name_name, "").strip()
+    missing_provider = [
+        name
+        for name, value in {
+            api_key_name: api_key,
+            model_name_name: model_name,
+        }.items()
+        if not value
+    ]
+    if missing_provider:
+        print_error(
+            f"Missing environment variable(s): {', '.join(missing_provider)}."
+        )
+        return 2
 
     try:
-        client = OpenAI(api_key=api_key, max_retries=0)
-        if worker_model_source == AgentModelSource.LOCAL:
-            worker_client = OpenAI(
-                api_key=local_worker_api_key,
-                base_url=local_worker_base_url,
+        if base_url is None:
+            client = OpenAI(api_key=api_key, max_retries=0)
+        else:
+            client = OpenAI(
+                api_key=api_key,
+                base_url=base_url,
                 max_retries=0,
             )
-            worker_model_name = local_worker_model_name
-        else:
-            worker_client = client
-            worker_model_name = model_name
     except Exception as error:
         print_error(
             "Run failed: model client construction failed "
@@ -1608,10 +2084,8 @@ def main():
     try:
         final_report = run_deep_research(
             client,
+            llm_provider,
             model_name,
-            worker_client,
-            worker_model_source,
-            worker_model_name,
             question,
             tavily_api_key,
         )
