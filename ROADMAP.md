@@ -29,7 +29,7 @@ and kept as simple as its learning objective allows.
 | 0.7.0 | Explicit Agent run contract | Every Worker returns a structured application-owned result with visible status, termination reason, and budget usage | Released |
 | 0.8.0 | Deep retrieval Worker | A Worker searches, selects, and reads bounded source content before producing research notes | Released |
 | 0.9.0 | Local open-weight Worker | The same Worker harness can run against either OpenAI or a local vLLM Responses-compatible endpoint | Released |
-| 0.10.0 | Long-horizon context sessions and global hosted-provider selection | One selected OpenAI or DeepSeek model runs the complete workflow, and each Worker crosses visible in-memory session boundaries through bounded context summaries instead of replaying unbounded history | Verified |
+| 0.10.0 | Long-horizon context sessions and global hosted-provider selection | One selected OpenAI or DeepSeek model runs the complete workflow, and each Worker crosses visible in-memory session boundaries through bounded context summaries instead of replaying unbounded history | Released |
 | 0.11.0 | Persistent evidence ledger | Every discovered or read source becomes an immutable run-scoped evidence record that survives context replacement | Draft |
 | 0.12.0 | Structured claims and citation verification | Worker claims link to persisted evidence and a separate citation boundary validates report provenance | Draft |
 | 0.13.0 | Durable run checkpoints and resume | Stable workflow boundaries persist versioned state that can resume without repeating completed work | Draft |
