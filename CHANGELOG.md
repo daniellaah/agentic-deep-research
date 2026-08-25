@@ -16,6 +16,11 @@ The project follows [Semantic Versioning](https://semver.org/).
   identity and selected-source evidence levels.
 - Added visible context sessions, deterministic projection boundaries, summary replacement, and
   context accounting to every Agent run result.
+- Added cited draft specifications for releases 0.11.0 through 0.18.0 covering persistent
+  evidence, claim and citation verification, durable resume, idempotent recovery, hybrid context,
+  traces and evaluation, bounded parallelism, and batch rollouts.
+- Added primary design references to the historical 0.1.0 and 0.2.0 specifications so every
+  release specification records at least one direct source.
 
 ### Changed
 
@@ -26,6 +31,9 @@ The project follows [Semantic Versioning](https://semver.org/).
 - Requested non-parallel Worker tool calls while accepting provider-returned call batches,
   executing budget-permitted calls synchronously in response order, and projecting every linked
   output.
+- Reordered the post-0.10.0 roadmap around evidence and runtime reliability before measured
+  parallelism and batch execution, and expanded the specification contract for persistence,
+  replay, security, evaluation, and known limitations.
 - Updated the project version, lock metadata, and arXiv `User-Agent` to 0.10.0 without adding a
   dependency.
 

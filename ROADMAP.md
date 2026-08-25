@@ -7,11 +7,11 @@ design unchanged. Each release adds one primary mechanism to the same small runn
 program and should make that mechanism observable without hiding it behind an agent
 framework.
 
-Near-term releases through 0.13.0 define a harness-first sequence: establish a stable Worker
+Near-term releases through 0.18.0 define a reliability-first sequence: establish a stable Worker
 run contract, deepen retrieval, compare explicit hosted providers, manage long-horizon context,
-improve multi-agent scheduling, and only then add batch rollout generation. Work
-beyond 0.13.0 remains a broad direction until real runs and rollouts reveal the next useful
-learning problems.
+persist evidence, verify claim provenance, recover interrupted runs, make retries idempotent,
+evaluate context quality, and only then add parallel scheduling and batch rollout generation.
+Training work remains a later direction until measured artifacts justify it.
 
 Every release must be specified before implementation, manually verified before tagging,
 and kept as simple as its learning objective allows.
@@ -30,10 +30,15 @@ and kept as simple as its learning objective allows.
 | 0.8.0 | Deep retrieval Worker | A Worker searches, selects, and reads bounded source content before producing research notes | Released |
 | 0.9.0 | Local open-weight Worker | The same Worker harness can run against either OpenAI or a local vLLM Responses-compatible endpoint | Released |
 | 0.10.0 | Long-horizon context sessions and global hosted-provider selection | One selected OpenAI or DeepSeek model runs the complete workflow, and each Worker crosses visible in-memory session boundaries through bounded context summaries instead of replaying unbounded history | In progress |
-| 0.11.0 | Bounded task graph and parallel workers | The Supervisor may create a small dependency-aware task batch whose ready tasks run concurrently | Planned |
-| 0.12.0 | Failure-aware adaptive orchestration | Failed work becomes visible in shared state so the Supervisor can replace, narrow, or abandon it within hard limits | Planned |
-| 0.13.0 | Batch rollout runner | JSON or JSONL tasks can produce multiple concurrent rollouts through the same Worker harness and result contract | Planned |
-| Later | Training readiness, reliability, and research quality | Persistence, structured trajectories, evaluation, evidence reliability, SFT, and RL are selected from observed rollout failures | Direction |
+| 0.11.0 | Persistent evidence ledger | Every discovered or read source becomes an immutable run-scoped evidence record that survives context replacement | Draft |
+| 0.12.0 | Structured claims and citation verification | Worker claims link to persisted evidence and a separate citation boundary validates report provenance | Draft |
+| 0.13.0 | Durable run checkpoints and resume | Stable workflow boundaries persist versioned state that can resume without repeating completed work | Draft |
+| 0.14.0 | Idempotent tools and failure-aware orchestration | External calls replay safely and failed work becomes a bounded Supervisor decision instead of a fatal exception | Draft |
+| 0.15.0 | Hybrid context memory | Pinned state, validated summary, recent complete boundaries, and retrieved evidence replace summary-only continuation | Draft |
+| 0.16.0 | Structured traces and evaluation harness | Versioned application events and deterministic graders make quality, recovery, cost, and context retention comparable | Draft |
+| 0.17.0 | Bounded parallel task graph | Ready tasks run concurrently under shared provenance, persistence, rate, and global-budget contracts | Draft |
+| 0.18.0 | Batch rollout runner | Versioned JSONL tasks produce auditable independent rollouts through the same durable run harness | Draft |
+| Later | Training readiness | SFT, reward modeling, and RL are selected only from evaluated high-quality trajectories | Direction |
 
 ## Phase 1: Model and Workflow Foundations
 
@@ -256,67 +261,65 @@ Let one Worker continue beyond a single replayable context without making state 
 This release studies context engineering, not persistent memory. Cross-run memory, resume,
 formal evidence state, and training trajectory output remain later concerns.
 
-## Phase 5: Adaptive Multi-Agent Scheduling
+## Phase 5: Evidence Reliability
 
-### 0.11.0 — Bounded Task Graph and Parallel Workers
+### 0.11.0 — Persistent Evidence Ledger
 
-Add concurrency only after the Worker harness, retrieval depth, global hosted-provider path, and
-context boundaries are explicit:
+Persist every normalized search and selected-source result before it enters transient model
+history. Assign stable run-scoped evidence IDs, hashes, and tool provenance so evidence survives
+context replacement without introducing full workflow resume.
 
-- let the Supervisor emit a bounded batch of tasks with stable task identifiers and dependency
-  declarations;
-- derive ready work from the task graph instead of asking models to mutate shared state;
-- execute independent ready tasks concurrently under explicit global and per-Worker limits;
-- keep dependent work sequential and retain a single-Worker path;
-- isolate each Worker's context, tools, budgets, and result; and
-- merge completed results centrally in deterministic task order for the next Supervisor decision
-  and final synthesis.
+### 0.12.0 — Structured Claims and Citation Verification
 
-Parallelism remains a scheduling mechanism rather than a second research policy. Retries,
-replacement tasks, durable queues, distributed execution, and quality scoring remain out of
-scope.
+Replace free-form Worker notes at the control boundary with structured claims linked to evidence
+IDs. Add a separate citation decision and deterministic validator so report URLs and excerpts must
+resolve to persisted evidence. Provenance becomes checkable without claiming universal truth
+verification.
 
-### 0.12.0 — Failure-Aware Adaptive Orchestration
+## Phase 6: Durable and Failure-Aware Execution
 
-Let the research subsystem respond to failed bounded work without terminating immediately:
+### 0.13.0 — Durable Run Checkpoints and Resume
 
-- represent task lifecycle as pending, running, completed, failed, or cancelled in in-memory
-  application state;
-- record a failed result separately from successful Worker notes;
-- let the Supervisor choose a bounded replacement, narrower follow-up, or explicit abandonment;
-- permit a bounded context handoff containing only the prior result or failure information needed
-  by a dependent task;
-- prevent repeated equivalent work and infinite recovery loops through application-owned limits;
-  and
-- make partial completion and final stop reasons visible before the report workflow.
+Persist versioned application state at stable workflow boundaries. Add run inspection, pause,
+cancel, and resume without repeating committed model or tool work. Keep credentials and private
+reasoning outside checkpoints.
 
-This release adds adaptive failure handling, not persistence, background jobs, worker-to-worker
-communication, or a general task system.
+### 0.14.0 — Idempotent Tools and Failure-Aware Orchestration
 
-## Phase 6: Rollout-Ready Execution
+Give external calls stable execution identities, bounded typed retry, and replay-safe results.
+Merge failed Worker results into ResearchState so the Supervisor can narrow, replace, accept
+partial evidence, abandon, or finish within one global run budget.
 
-### 0.13.0 — Batch Rollout Runner
+## Phase 7: Context Quality and Measurement
 
-Add a second entry path for repeatable research-policy sampling while preserving the interactive
-CLI:
+### 0.15.0 — Hybrid Context Memory
 
-- accept a documented JSON or JSONL task format;
-- generate a configured number of independent rollouts for each task;
-- assign stable task and rollout identifiers and record model and sampling configuration;
-- schedule independent task-rollout pairs concurrently under one global limit;
-- return the same Agent run result contract used by interactive Workers;
-- write generated rollout artifacts under `runs/` without treating them as evaluation scores;
-  and
-- keep the interactive Scope, approval, Supervisor, and report experience complete and runnable.
+Compare the summary-only v0.10 baseline with a deterministic context assembled from immutable
+pinned state, validated summary, persistent evidence retrieval, and recent complete response/tool
+boundaries. Measure retained constraints, evidence, failures, and next actions.
 
-This release provides a QUEST-style batch execution boundary, not SFT, RL, reward computation,
-benchmark grading, trajectory quality filtering, or interrupted-run recovery.
+### 0.16.0 — Structured Traces and Evaluation Harness
 
-## Later Direction: Training Readiness, Reliability, and Research Quality
+Emit versioned causal application events and execute a fixed evaluation corpus with deterministic
+graders and optional model graders. Establish sequential quality, provenance, recovery, cost, and
+latency baselines before adding concurrency. Traces never claim to expose private chain-of-thought.
 
-After 0.13.0, select releases from failures observed in real hosted-model and batch rollouts.
-Candidate mechanisms include persistent run state and recovery, structured trajectory recording,
-repeatable evaluation, evidence and citation reliability, SFT data preparation, a first bounded
-SFT experiment, and agentic RL. Their order and release boundaries remain intentionally
-unscheduled until the harness produces the costs, failures, and behavior differences needed to
-justify them.
+## Phase 8: Measured Scale
+
+### 0.17.0 — Bounded Parallel Task Graph
+
+Let the Supervisor issue a small acyclic task batch. Schedule ready isolated Workers under shared
+global budgets, durable reservations, per-domain limits, cancellation, and deterministic result
+ordering. Accept a parallel default only when v0.16 evaluation demonstrates a declared benefit.
+
+### 0.18.0 — Batch Rollout Runner
+
+Accept versioned JSONL tasks and generate independent auditable rollouts through the same durable
+interactive harness. Preserve failures, resume partial batches, enforce batch-level budgets, and
+aggregate exact configuration and evaluation results.
+
+## Later Direction: Training Readiness
+
+After 0.18.0, select SFT data preparation, reward modeling, and agentic RL only from failures and
+high-quality trajectories measured by the evaluation harness. Training must not silently replace
+the application's run, evidence, tool, budget, or stopping semantics.

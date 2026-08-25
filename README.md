@@ -320,14 +320,19 @@ the release can be marked verified. Later releases evolve the same explicit runt
 | Version | Primary mechanism | Intended outcome |
 | --- | --- | --- |
 | 0.10.0 | Long-horizon context sessions | A long Worker run crosses explicit in-memory summary boundaries instead of replaying unbounded history. |
-| 0.11.0 | Bounded task graph and parallel workers | The Supervisor creates dependency-aware tasks and the application runs independent ready work concurrently. |
-| 0.12.0 | Failure-aware adaptive orchestration | Failed tasks remain visible so the Supervisor can replace, narrow, or abandon them within hard limits. |
-| 0.13.0 | Batch rollout runner | JSON or JSONL tasks generate multiple rollouts through the same Worker harness and result contract. |
+| 0.11.0 | Persistent evidence ledger | Retrieved evidence survives context replacement with stable identity and provenance. |
+| 0.12.0 | Structured claims and citation verification | Report claims and citations resolve to persisted evidence records. |
+| 0.13.0 | Durable run checkpoints and resume | Interrupted runs continue without repeating committed model or tool work. |
+| 0.14.0 | Idempotent tools and failure-aware orchestration | External calls replay safely and failed work becomes an explicit Supervisor decision. |
+| 0.15.0 | Hybrid context memory | Pinned state, summaries, recent boundaries, and evidence retrieval replace summary-only continuation. |
+| 0.16.0 | Structured traces and evaluation harness | Quality, provenance, recovery, context retention, cost, and latency become comparable. |
+| 0.17.0 | Bounded parallel task graph | Independent ready tasks run concurrently under shared budgets and deterministic ordering. |
+| 0.18.0 | Batch rollout runner | Versioned JSONL tasks generate auditable rollouts through the same durable harness. |
 
 OpenAI-hosted models remain useful as teachers, baselines, and acceptance references.
-Persistence, structured trajectories, evaluation, evidence reliability, SFT, and RL remain later
-directions selected from failures observed in real hosted-model and batch-rollout runs. See the
-[roadmap](ROADMAP.md) for release boundaries and explicit exclusions.
+SFT, reward modeling, and RL remain later directions selected only from evaluated high-quality
+trajectories. See the [roadmap](ROADMAP.md) and linked release specifications for design sources,
+release boundaries, and explicit exclusions.
 
 ## Project Structure
 
