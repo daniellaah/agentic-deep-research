@@ -21,7 +21,9 @@ tracing is deferred until a release specification explicitly introduces it.
 - Add a dependency only when the current release specification requires it.
 - Do not add a web application, service API, provider-neutral gateway, or evaluation
   framework unless a later specification explicitly changes the project scope.
-- Automated tests are not required unless the current specification requests them.
+- Automated tests remain release-scoped. A release that introduces persistence, idempotency,
+  citation validation, recovery, or concurrency must include deterministic tests for those
+  application-owned contracts.
 
 ## Specification Workflow
 
@@ -55,8 +57,8 @@ tracing is deferred until a release specification explicitly introduces it.
   the agent harness remains visible.
 - Introduce paper search and web search incrementally through release specifications.
 - Produce a final Markdown report for completed runs.
-- Add structured tracing only when an active release specification requires it, without
-  claiming to expose private chain-of-thought.
+- Add structured tracing only when an active release specification requires it. The roadmap first
+  permits this in v0.16.0, and no trace may claim to expose private chain-of-thought.
 
 ## Language
 
@@ -82,6 +84,9 @@ comments, prompts, CLI text, configuration, commit messages, and release notes.
 - Store generated run artifacts under `runs/`.
 - Do not commit generated traces, reports, caches, virtual environments, or secrets.
 - Keep `.env` local and document required variables in `.env.example`.
+- Release 0.10.0 remains in-memory. Draft v0.11.0 introduces persisted evidence, v0.13.0
+  introduces resumable run state, and v0.16.0 introduces structured trace artifacts; implement
+  none of those early unless its active specification is accepted.
 
 ## Required Checks
 
