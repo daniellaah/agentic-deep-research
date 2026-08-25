@@ -11,7 +11,7 @@ release at a time. The current runtime turns an initial question into an explici
 ResearchBrief, lets a Research Supervisor adaptively delegate bounded work to isolated Research
 Workers, and uses one run-level OpenAI or DeepSeek provider for every LLM call through the
 Responses API. Each Worker can search, deliberately select, and read bounded source content
-across as many as three bounded context sessions before returning through an application-owned
+across as many as five bounded context sessions before returning through an application-owned
 run contract. Release 0.10.0 makes long-horizon state replacement explicit before later
 multi-agent scheduling and batch rollouts.
 
@@ -161,7 +161,7 @@ Evidence targets:
 ================================================================================
 
   [Worker 1/4] <task title> | STARTED
-    [Context 1/3] Session | STARTED | fresh task history
+    [Context 1/5] Session | STARTED | fresh task history
     [Turn 1/15] Model | STARTED | 10 tools, 4 source reads remaining
     [Tool 1/10] tavily_search_tool | STARTED
       [Sources] Worker registry | UPDATED | 3 new, 3 available
@@ -171,8 +171,8 @@ Evidence targets:
       [Read 1/4] S1 (<source host>) | STARTED
       [Read 1/4] S1 (<source host>) | COMPLETED | <characters> characters, 3 reads remaining
     [Tool 2/10] read_source_tool | COMPLETED
-    [Context 1/3] Boundary | REQUIRED | projected <tokens>; trigger 12,000
-    [Summary 1/2] Research state | STARTED
+    [Context 1/5] Boundary | REQUIRED | projected <tokens>; trigger 12,000
+    [Summary 1/4] Research state | STARTED
 
 ================================================================================
 RESEARCH STATE SUMMARY | WORKER 1 | SESSION 1 -> 2
@@ -180,8 +180,8 @@ RESEARCH STATE SUMMARY | WORKER 1 | SESSION 1 -> 2
 <validated completed work, resolved source URLs, gaps, and next actions>
 ================================================================================
 
-    [Summary 1/2] Research state | COMPLETED | validated
-    [Context 2/3] Session | STARTED | validated summary
+    [Summary 1/4] Research state | COMPLETED | validated
+    [Context 2/5] Session | STARTED | validated summary
 ...
   [Worker 1/4] <task title> | COMPLETED | completed
 
@@ -195,8 +195,8 @@ Termination reason: completed
 Model turns: <used>/15
 Tool calls: <used>/10
 Source reads: <used>/4
-Context sessions: <used>/3
-Context summaries: <used>/2
+Context sessions: <used>/5
+Context summaries: <used>/4
 Peak observed input tokens: <count>
 Peak projected input tokens: <count>/20000
 ================================================================================
@@ -290,7 +290,7 @@ context accounting. Search results receive source IDs only for eligible
 primary HTTP(S) URLs in the active Worker. The read tool accepts an ID and focused query rather
 than a model-supplied URL, sends one resolved destination to Tavily Extract, and bounds selected
 content to 6,000 characters. Each Worker may use 15 model turns, 10 tool attempts, four selected-
-source read attempts, three sessions, and two summaries. Every ordinary Worker request disables
+source read attempts, five sessions, and four summaries. Every ordinary Worker request disables
 parallel tool calls as a provider hint. If an endpoint still returns multiple calls, the
 application executes budget-permitted calls synchronously in response order and appends a linked
 result for every call.
@@ -306,16 +306,20 @@ the source registry, and successfully read source IDs survive; the replaced hist
 Only completed results enter ResearchState, and only the approved brief and combined Worker notes
 reach Write. Research uses automatic tool selection while budget remains and
 `tool_choice="none"` after the tenth tool attempt. Worker requests use the configured model's
-default output limit; summary requests use an 8,000-token limit. Model failures stop the workflow,
-while tool failures return to the active Worker so it can adapt within its remaining budget. The
-selected SDK client disables automatic retries. DeepSeek incompatibility is reported at the
-existing model-error boundary without response translation or fallback to OpenAI.
+default output limit; Supervisor requests use an 8,000-token limit and summary requests use a
+16,000-token limit. Every Pydantic Structured Output request retains provider-default reasoning.
+Model failures stop the workflow, while tool failures return to the active Worker so it can adapt
+within its remaining budget. The selected SDK client disables automatic retries. DeepSeek
+incompatibility is reported at the existing model-error boundary without response translation or
+fallback to OpenAI.
 
 ## Planned Release Direction
 
-The v0.10.0 development runtime implements global OpenAI-or-DeepSeek provider selection and
-application-owned long-horizon context sessions. Real endpoint acceptance remains pending before
-the release can be marked verified. Later releases evolve the same explicit runtime in this order:
+The verified v0.10.0 runtime implements global OpenAI-or-DeepSeek provider selection and
+application-owned long-horizon context sessions. Complete real-endpoint acceptance passed with
+both providers, including visible boundary crossing, validated summary replacement, resumed
+research, and final report generation. Later releases evolve the same explicit runtime in this
+order:
 
 | Version | Primary mechanism | Intended outcome |
 | --- | --- | --- |

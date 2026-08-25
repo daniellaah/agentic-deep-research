@@ -12,7 +12,7 @@ from urllib.parse import unquote, urlsplit
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, ValidationError
 
 from agent_instructions import (
     BRIEF_INSTRUCTIONS,
@@ -39,12 +39,12 @@ MAX_WORKER_TURNS = 15
 MAX_WORKER_TOOL_CALLS = 10
 MAX_WORKER_SOURCE_READS = 4
 MAX_RESEARCH_WORKERS = 4
-MAX_SUPERVISOR_OUTPUT_TOKENS = 4000
-MAX_CONTEXT_SESSIONS = 3
-MAX_CONTEXT_SUMMARIES = 2
+MAX_SUPERVISOR_OUTPUT_TOKENS = 8000
+MAX_CONTEXT_SESSIONS = 5
+MAX_CONTEXT_SUMMARIES = 4
 CONTEXT_TRIGGER_TOKENS = 12000
 CONTEXT_HARD_LIMIT_TOKENS = 20000
-MAX_SUMMARY_OUTPUT_TOKENS = 8000
+MAX_SUMMARY_OUTPUT_TOKENS = 16000
 FUNCTION_OUTPUT_PROJECTION_OVERHEAD_TOKENS = 256
 MAX_USER_INPUT_CHARACTERS = 2000
 MAX_AGENT_ERROR_CHARACTERS = 300
@@ -316,7 +316,25 @@ def compact_agent_error(message):
     return compacted[:MAX_AGENT_ERROR_CHARACTERS]
 
 
+def format_validation_error(error):
+    issues = []
+    for issue in error.errors(
+        include_url=False,
+        include_context=False,
+        include_input=False,
+    ):
+        location = ".".join(str(part) for part in issue.get("loc", ()))
+        error_type = issue.get("type", "validation_error")
+        issues.append(f"{location or '<root>'}: {error_type}")
+    detail = "; ".join(issues) or "unknown validation error"
+    return compact_agent_error(
+        f"Research model structured output failed validation ({detail})."
+    )
+
+
 def format_model_exception(error):
+    if isinstance(error, ValidationError):
+        return format_validation_error(error)
     details = [type(error).__name__]
     status_code = getattr(error, "status_code", None)
     if isinstance(status_code, int):

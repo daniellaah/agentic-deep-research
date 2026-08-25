@@ -14,7 +14,7 @@ written before implementation and remains the acceptance reference for its relea
 - [v0.7.0 — Explicit Agent Run Contract](v0.7.0-explicit-agent-run-contract.md) — Released
 - [v0.8.0 — Deep Retrieval Worker](v0.8.0-deep-retrieval-worker.md) — Released
 - [v0.9.0 — Local Open-Weight Worker](v0.9.0-local-open-weight-worker.md) — Released
-- [v0.10.0 — Long-Horizon Context Sessions](v0.10.0-long-horizon-context-sessions.md) — In progress
+- [v0.10.0 — Long-Horizon Context Sessions](v0.10.0-long-horizon-context-sessions.md) — Verified
 - [v0.11.0 — Persistent Evidence Ledger](v0.11.0-persistent-evidence-ledger.md) — Draft
 - [v0.12.0 — Structured Claims and Citation Verification](v0.12.0-claim-evidence-citations.md) — Draft
 - [v0.13.0 — Durable Run Checkpoints and Resume](v0.13.0-durable-run-checkpoints.md) — Draft

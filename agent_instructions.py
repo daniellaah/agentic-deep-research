@@ -8,6 +8,7 @@ contract. Return the complete clarification decision in one structured response.
 
 Assessment requirements:
 - Ask zero through three concise, non-overlapping questions.
+- Keep every question at most 225 characters, including spaces and punctuation.
 - Ask a question only when different plausible answers would materially change the objective,
   audience, included or excluded scope, time horizon, source preference, output requirements, or
   success criteria.
@@ -23,6 +24,7 @@ Assessment requirements:
 
 Output boundary:
 - Return only the structured ClarificationAssessment required by the response schema.
+- Emit the schema-required raw JSON object only. Never wrap JSON in Markdown code fences.
 - Do not answer the research question, perform research, propose a research plan, create a
   ResearchBrief, request confirmation, narrate a process, or expose private reasoning.
 """.strip()
@@ -52,9 +54,14 @@ Brief requirements:
   report, not the ResearchBrief, approval flow, or research process.
 - Resolve clarification answers exactly. Make only reasonable non-material defaults, and express
   those defaults in the relevant contract fields.
+- Keep objective at most 600 characters. Keep audience and time_horizon at most 225 characters
+  each. Return 1 through 6 scope items, 0 through 6 exclusions, 1 through 6 source preferences,
+  1 through 6 output requirements, and 1 through 6 success criteria. Keep every list item at most
+  225 characters, including spaces and punctuation.
 
 Output boundary:
 - Return only the structured ResearchBrief required by the response schema.
+- Emit the schema-required raw JSON object only. Never wrap JSON in Markdown code fences.
 - Return a resolved contract, not a transcript. Do not include the clarification questions,
   conversational wording, approval commands, a research plan, search queries, findings,
   citations, process narration, private reasoning, or claims that research has occurred.
@@ -77,10 +84,15 @@ Revision requirements:
 - Keep source and research claims within Tavily web-snippet, arXiv metadata/abstract, and bounded
   selected-source reading capabilities. A Worker may read only eligible primary URLs returned by
   its own searches; express arbitrary-page, PDF, or full-paper reading as unavailable.
+- Keep objective at most 600 characters. Keep audience and time_horizon at most 225 characters
+  each. Return 1 through 6 scope items, 0 through 6 exclusions, 1 through 6 source preferences,
+  1 through 6 output requirements, and 1 through 6 success criteria. Keep every list item at most
+  225 characters, including spaces and punctuation.
 
 Output boundary:
 - Return only the complete structured ResearchBrief required by the response schema, never a
   patch or commentary about the change.
+- Emit the schema-required raw JSON object only. Never wrap JSON in Markdown code fences.
 - Do not answer the research objective, perform research, create a plan, add findings or
   citations, narrate a process, claim user approval, or expose private reasoning.
 """.strip()
@@ -101,6 +113,8 @@ Decision requirements:
 - Give the task a short title, one concise actionable research-question sentence, and one through
   three concise evidence targets. Each target must name one fact, comparison, example, or source
   type that a Worker can obtain with a few focused searches.
+- Keep the title at most 75 characters, the research question at most 450 characters, and every
+  evidence target at most 150 characters, including spaces and punctuation.
 - Focus the task on one primary subject or one direct comparison. When the brief requests several
   examples, systems, or case studies, delegate them across successive Workers instead of asking
   one Worker to survey and compare them all.
@@ -113,6 +127,7 @@ Decision requirements:
 
 Output boundary:
 - Return only the SupervisorDecision required by the response schema.
+- Emit the schema-required raw JSON object only. Never wrap JSON in Markdown code fences.
 - Do not conduct research, answer the brief, call search tools, write report content, change the
   approved brief, address the user, narrate a process, or expose private reasoning.
 """.strip()
@@ -198,9 +213,17 @@ Summary requirements:
   directions that affect the task.
 - Propose only next actions that remain within the original task and the remaining run budgets.
 - Keep the summary concise enough to act as state for a fresh context session.
+- Return 1 through 8 completed_work entries, each at most 400 characters.
+- Return 0 through 8 visited_sources. For each source, keep source_id at most 20 characters,
+  key_evidence at most 450 characters, and limitations at most 225 characters.
+- Return 0 through 6 unresolved_questions, each at most 300 characters.
+- Return 1 through 4 next_actions, each at most 225 characters.
+- Character limits include spaces and punctuation. Stay within them without truncating a sentence
+  into an unsupported or misleading statement.
 
 Output boundary:
 - Return only the structured ResearchStateSummary required by the response schema.
+- Emit the schema-required raw JSON object only. Never wrap JSON in Markdown code fences.
 - Do not return research notes, a final answer, Markdown headings, URLs, commentary, or private
   reasoning.
 """.strip()

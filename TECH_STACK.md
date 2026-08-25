@@ -107,7 +107,7 @@ Terminal statuses are `completed`, `failed`, and `cancelled`. Bounded terminatio
 and `cancelled`. A successful forced final-notes turn after all ten tool attempts returns
 `completed`/`tool_limit`; using all 15 model attempts without valid notes returns
 `failed`/`turn_limit`. `context_limit` now represents the application-owned 20,000-token
-pre-summary projection limit or three-session limit. Provider context-window errors remain
+pre-summary projection limit or five-session limit. Provider context-window errors remain
 `model_error` because the application does not parse exception text. Every expected Worker outcome
 prints one result summary. Only completed results enter `ResearchState`; failed or cancelled
 results remain fail-fast and stop before another Supervisor or report request.
@@ -115,7 +115,11 @@ results remain fail-fast and stop before another Supervisor or report request.
 Every request remains stateless and uses `store=False`. The thin `llm_call` provider
 primitive supports mutually exclusive custom tools or a Pydantic text format, accepts an
 optional tool choice, parallel-tool setting, and output-token limit, and returns the official SDK
-`Response` without wrapping it. Supervisor requests use a 4,000-token output limit. Ordinary
+`Response` without wrapping it. Every request retains provider-default reasoning because real
+DeepSeek probes with low or disabled reasoning returned fenced JSON that the official SDK correctly
+rejected. Supervisor requests use an 8,000-token output limit because real
+DeepSeek acceptance showed that its default reasoning could consume a 4,000-token limit before
+returning one small validated decision. Ordinary
 Worker requests omit an
 application-set output limit because Responses API output limits include both reasoning tokens
 and visible output, and real 4,000- and 8,000-token runs both ended before returning final notes.
@@ -145,11 +149,11 @@ usage plus the UTF-8 byte length and a fixed 256-token allowance for each linked
 A projection at or above 12,000 tokens enters the explicit context boundary; a projection above
 20,000 stops before summary. Otherwise the complete active-session history is replayed unchanged.
 
-At a permitted boundary, the same selected model spends one of the 15 run-level turns on an
-8,000-token-bounded `ResearchStateSummary` Structured Output. The application validates its source
+At a permitted boundary, the same selected model spends one of the 15 run-level turns on a
+16,000-token-bounded `ResearchStateSummary` Structured Output. The application validates its source
 IDs against the run registry and prevents `selected_source` claims for IDs without a successful
 read. It renders URLs from the registry, discards the old history, and starts the next of at most
-three sessions from only the task, approved brief, remaining budgets, and validated summary. Tool,
+five sessions from only the task, approved brief, remaining budgets, and validated summary. Tool,
 read, source, turn, and context counters remain run-level.
 
 Search results with eligible primary HTTP(S) URLs receive application-issued `S1`, `S2`, ...
@@ -214,7 +218,7 @@ to 6,000 characters.
 Each search returns at most three results. Tavily content and arXiv summaries are truncated
 to 2,000 characters per result before they enter manually replayed Worker history. Each Worker
 has at most 15 model turns, ten total tool execution attempts, four selected-source read attempts,
-three context sessions, and two context summaries. These deterministic boundaries keep explicit
+five context sessions, and four context summaries. These deterministic boundaries keep explicit
 history replay and replacement observable.
 
 All three JSON tool definitions and implementations live in `agent_tools.py` so
@@ -313,7 +317,13 @@ Pydantic 2 validates only model-generated application boundaries:
 `ClarificationAssessment`, `ResearchBrief`, `SupervisorDecision`, and nested
 `ResearchTask`, plus the v0.10.0 `ResearchStateSummary` and nested `SummarySource`. Application
 checks add source-ID uniqueness, registry membership, and non-inflated evidence levels after
-Pydantic validation. Clarification answers, approval state, Responses API histories, and
+Pydantic validation. Scope, Supervisor, and summary instructions repeat their Pydantic list bounds
+and use conservative text-generation targets below the hard character limits because real DeepSeek
+acceptance showed that schema acceptance and exact hard-limit prompting do not guarantee every
+generated value remains within those bounds. They also request raw JSON explicitly and forbid
+Markdown code fences, matching DeepSeek's official JSON-output prompting guidance.
+Clarification answers, approval state,
+Responses API histories, and
 Supervisor `ResearchState` remain plain strings, lists, and dictionaries. The current Supervisor
 state keys are `approved_brief`, `worker_results`, and `stop_reason`; `worker_results` is an ordered
 list of completed `AgentRunResult` values.

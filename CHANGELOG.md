@@ -6,12 +6,14 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-08-24
+
 ### Added
 
 - Added run-level `LLM_PROVIDER` selection between OpenAI and the official hosted DeepSeek
   Responses-compatible endpoint.
 - Added provider-specific API-key and model-name environment configuration.
-- Added the in-progress v0.10.0 long-horizon context-session specification.
+- Added the v0.10.0 long-horizon context-session specification.
 - Added bounded `ResearchStateSummary` Structured Outputs with application validation for source
   identity and selected-source evidence levels.
 - Added visible context sessions, deterministic projection boundaries, summary replacement, and
@@ -26,11 +28,25 @@ The project follows [Semantic Versioning](https://semver.org/).
 
 - Removed local vLLM Worker configuration and client routing from the current runtime.
 - Changed every LLM stage to use the one provider and model selected for the run.
-- Expanded each Worker to 15 model turns, 10 tool attempts, four selected-source reads, three
-  context sessions, and two context summaries.
+- Expanded each Worker to 15 model turns, 10 tool attempts, four selected-source reads, five
+  context sessions, and four context summaries after real DeepSeek acceptance exhausted its tools
+  at a required fourth-session boundary before the forced-notes turn.
 - Requested non-parallel Worker tool calls while accepting provider-returned call batches,
   executing budget-permitted calls synchronously in response order, and projecting every linked
   output.
+- Raised the Supervisor output limit from 4,000 to 8,000 tokens after real DeepSeek acceptance
+  showed that reasoning tokens could exhaust the smaller limit before a validated decision.
+- Repeated Structured Output list bounds and added conservative character targets below the
+  Pydantic hard limits after real DeepSeek responses occasionally exceeded exact prompted bounds.
+- Added safe Pydantic validation diagnostics containing only field paths and error types, without
+  rejected model values or source content.
+- Raised the summary output limit from 8,000 to 16,000 tokens after real DeepSeek default thinking
+  exhausted the smaller budget, and raised the declared minimum model context window to 65,536
+  tokens to preserve a conservative allowance.
+- Retained provider-default reasoning after real DeepSeek probes with low and disabled reasoning
+  returned fenced JSON that the official SDK correctly rejected instead of repairing.
+- Required raw JSON and prohibited Markdown code fences in every Pydantic Structured Output
+  instruction, following DeepSeek's official JSON-output prompting guidance.
 - Reordered the post-0.10.0 roadmap around evidence and runtime reliability before measured
   parallelism and batch execution, and expanded the specification contract for persistence,
   replay, security, evaluation, and known limitations.
